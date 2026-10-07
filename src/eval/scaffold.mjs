@@ -28,21 +28,22 @@ function locate(runs, value) {
 function dimensionTokens(runs, pageH) {
   const out = [], seen = new Set();
   const TH = 12;
+  // Conservative: only the drawing area. Recall for dims that sit low on the sheet
+  // is handled by click-to-bind in the editor (widening this pulled in title-block noise).
   for (const list of orderedLists(runs)) {
-    let acc = '', coord = null, firstY = 0, firstX = 0;
+    let acc = '', coord = null, firstY = 0;
     const flush = () => {
-      // decide on the whole token (never a partial), using its starting position
       if (acc && firstY < 0.72 * pageH && /^\d{3,6}(\.\d{1,2})?$/.test(acc) && !seen.has(acc)) { seen.add(acc); out.push(acc); }
-      acc = ''; coord = null;
+      acc = ''; coord = null; firstY = 0;
     };
     for (const r of list) {
       const vertical = Math.abs(r.dir.b) > Math.abs(r.dir.a);
       const c = vertical ? r.y : r.x;
       const numeric = /^[0-9.,]+$/.test(norm(r.text));
       if (numeric && (coord === null || Math.abs(c - coord) <= TH)) {
-        if (coord === null) { firstY = r.y; firstX = r.x; }
+        if (coord === null) firstY = r.y;
         acc += norm(r.text); coord = c;
-      } else { flush(); if (numeric) { acc = norm(r.text); coord = c; firstY = r.y; firstX = r.x; } }
+      } else { flush(); if (numeric) { acc = norm(r.text); coord = c; firstY = r.y; } }
     }
     flush();
   }
@@ -65,6 +66,22 @@ function propose(runs, pageH) {
   let i = 0;
   for (const d of dimensionTokens(runs, pageH)) { if (i >= 8) break; add(`dim${i + 1}`, `Dimension ${i + 1}`, d); i++; }
   return props;
+}
+
+/** A demo set of changed values so the "Sample changes" button works on any template. */
+function makeSample(props) {
+  const s = {};
+  for (const p of props) {
+    const v = String(p.value);
+    if (/^[0-9.,]+$/.test(v)) {
+      const n = parseFloat(v.replace(/,/g, ''));
+      if (!Number.isNaN(n)) s[p.id] = (n * 1.1).toFixed(v.includes('.') ? 2 : 0);
+    } else if (p.id === 'customer') s[p.id] = 'ACME TOWER CRANES SDN BHD';
+    else if (p.id === 'drawingNo') s[p.id] = v.replace(/R\d{2}$/, 'R99').replace(/\d{2}$/, '99');
+    else if (p.id === 'workingLoad') s[p.id] = '200KG';
+    else if (p.id === 'productName') s[p.id] = v + ' - REV B';
+  }
+  return s;
 }
 
 export function scaffold(pdf, opts = {}) {
@@ -103,7 +120,7 @@ export function scaffold(pdf, opts = {}) {
     base: { svg: 'base.clean.svg' },
     params: props.map((p) => ({ id: p.id, label: p.label, type: 'text', default: p.value })),
     bindings: props.map((p) => ({ value: p.value, param: p.id, mode: p.mode })),
-    sample: {},
+    sample: makeSample(props),
   };
   writeFileSync(join(dir, 'template.json'), JSON.stringify(tpl, null, 2) + '\n');
 

@@ -72,6 +72,12 @@
       "label": "Dimension 7",
       "type": "text",
       "default": "103"
+    },
+    {
+      "id": "dim",
+      "label": "dim",
+      "type": "text",
+      "default": "980"
     }
   ],
   "bindings": [
@@ -129,7 +135,24 @@
       "value": "103",
       "param": "dim7",
       "mode": "group"
+    },
+    {
+      "value": "980",
+      "param": "dim",
+      "mode": "group"
     }
   ],
-  "sample": {}
+  "sample": {
+    "drawingNo": "LSB-2607-003-RHC-R99",
+    "customer": "ACME TOWER CRANES SDN BHD",
+    "workingLoad": "200KG",
+    "productName": "ALUMINIUM SAFETY LADDER TROLLEY 9 STEP (CUSTOMIZED) - REV B",
+    "dim1": "1078",
+    "dim2": "2609",
+    "dim3": "770",
+    "dim4": "2750",
+    "dim5": "1100",
+    "dim6": "336",
+    "dim7": "113"
+  }
 }

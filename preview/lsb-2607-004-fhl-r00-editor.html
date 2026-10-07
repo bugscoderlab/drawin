@@ -48,6 +48,9 @@
       <button class="ghost" id="reset">Reset</button>
     </div>
     <button class="primary" id="download">Download SVG</button>
+    <h2>Click-to-bind</h2>
+    <div class="muted" style="font-size:.78rem;margin-bottom:6px">Turn on, then click any number or text in the drawing to add it as a parameter.</div>
+    <button class="ghost" id="bind">Bind mode: off</button>
   </aside>
   <section class="stage">
     <div class="pdfbox"><div class="ph" id="pdfph">Drop or choose a PDF to view it here.</div><iframe id="pdfview"></iframe></div>
@@ -55,7 +58,7 @@
   </section>
 </main>
 
-<script id="tpl" type="application/json">{"id":"lsb-2607-004-fhl-r00","name":"ALUMINIUM CAT LADDER BODY,HANDRAIL & CAGE RING TYPE","source":"LSB-2607-004-FHL-R00.pdf","match":{},"base":{"svg":"base.clean.svg"},"params":[{"id":"drawingNo","label":"Drawing No.","type":"text","default":"LSB/2607/004/FHL/R00"},{"id":"customer","label":"Customer","type":"text","default":"FHL CONSTRUCTION SDN BHD"},{"id":"workingLoad","label":"Working Load","type":"text","default":"150KG"},{"id":"productName","label":"Title","type":"text","default":"ALUMINIUM CAT LADDER BODY,HANDRAIL & CAGE RING TYPE"},{"id":"dim1","label":"Dimension 1","type":"text","default":"500.00"},{"id":"dim2","label":"Dimension 2","type":"text","default":"6650.00"},{"id":"dim3","label":"Dimension 3","type":"text","default":"900.00"},{"id":"dim4","label":"Dimension 4","type":"text","default":"5360.40"}],"bindings":[{"value":"LSB/2607/004/FHL/R00","param":"drawingNo","mode":"text"},{"value":"FHL CONSTRUCTION SDN BHD","param":"customer","mode":"text"},{"value":"150KG","param":"workingLoad","mode":"text"},{"value":"ALUMINIUM CAT LADDER BODY,HANDRAIL & CAGE RING TYPE","param":"productName","mode":"text"},{"value":"500.00","param":"dim1","mode":"group"},{"value":"6650.00","param":"dim2","mode":"group"},{"value":"900.00","param":"dim3","mode":"group"},{"value":"5360.40","param":"dim4","mode":"group"}],"sample":{}}</script>
+<script id="tpl" type="application/json">{"id":"lsb-2607-004-fhl-r00","name":"ALUMINIUM CAT LADDER BODY,HANDRAIL & CAGE RING TYPE","source":"LSB-2607-004-FHL-R00.pdf","match":{},"base":{"svg":"base.clean.svg"},"params":[{"id":"drawingNo","label":"Drawing No.","type":"text","default":"LSB/2607/004/FHL/R00"},{"id":"customer","label":"Customer","type":"text","default":"FHL CONSTRUCTION SDN BHD"},{"id":"workingLoad","label":"Working Load","type":"text","default":"150KG"},{"id":"productName","label":"Title","type":"text","default":"ALUMINIUM CAT LADDER BODY,HANDRAIL & CAGE RING TYPE"},{"id":"dim1","label":"Dimension 1","type":"text","default":"500.00"},{"id":"dim2","label":"Dimension 2","type":"text","default":"6650.00"},{"id":"dim3","label":"Dimension 3","type":"text","default":"900.00"},{"id":"dim4","label":"Dimension 4","type":"text","default":"5360.40"}],"bindings":[{"value":"LSB/2607/004/FHL/R00","param":"drawingNo","mode":"text"},{"value":"FHL CONSTRUCTION SDN BHD","param":"customer","mode":"text"},{"value":"150KG","param":"workingLoad","mode":"text"},{"value":"ALUMINIUM CAT LADDER BODY,HANDRAIL & CAGE RING TYPE","param":"productName","mode":"text"},{"value":"500.00","param":"dim1","mode":"group"},{"value":"6650.00","param":"dim2","mode":"group"},{"value":"900.00","param":"dim3","mode":"group"},{"value":"5360.40","param":"dim4","mode":"group"}],"sample":{"drawingNo":"LSB/2607/004/FHL/R99","customer":"ACME TOWER CRANES SDN BHD","workingLoad":"200KG","productName":"ALUMINIUM CAT LADDER BODY,HANDRAIL & CAGE RING TYPE - REV B","dim1":"550.00","dim2":"7315.00","dim3":"990.00","dim4":"5896.44"}}</script>
 <script id="base" type="text/plain"><?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <!-- Created with Inkscape (http://www.inkscape.org/) -->
 
@@ -65,7 +68,7 @@
    width="793.76001"
    height="1122.5601"
    viewBox="0 0 793.76001 1122.5601"
-   sodipodi:docname="LSB-2607-004-FHL-R00.pdf"
+   sodipodi:docname="ladder-upload-1791397676282-LSB-2607-004-FHL-R00.pdf"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns:xlink="http://www.w3.org/1999/xlink"
@@ -108040,7 +108043,8 @@
   function textRuns(svg){ const runs=[]; for(const m of svg.matchAll(TEXT_RE)){ const raw=m[0];
     const open=raw.match(/^<text\b[^>]*>/)[0]; const inner=raw.slice(open.length, raw.length-7);
     const data=[...inner.matchAll(/>([^<]*)</g)].map(x=>x[1]); const p=xy(open);
-    runs.push({start:m.index,end:m.index+raw.length,open,inner,data,text:unesc(data.join('')),x:p.x,y:p.y,dir:{a:p.a,b:p.b}}); }
+    const idm=open.match(/\bid="([^"]+)"/);
+    runs.push({id:idm?idm[1]:null, start:m.index,end:m.index+raw.length,open,inner,data,text:unesc(data.join('')),x:p.x,y:p.y,dir:{a:p.a,b:p.b}}); }
     return runs; }
   function orderedLists(runs){ const H=[],Vdn=[],Vup=[];
     for(const r of runs){ const v=Math.abs(r.dir.b)>Math.abs(r.dir.a);
@@ -108057,20 +108061,35 @@
   function render(baseSvgbind, bindings, params){ const runs=textRuns(baseSvgbind); const edits=[]; const report=[];
     for(const b of bindings){ const next=params[b.param];
       if(next===undefined){report.push({...b,ok:false,reason:'no value'});continue;}
-      if(String(next)===String(b.value)){report.push({...b,ok:true,runs:0,unchanged:true});continue;}
-      const g=findRun(runs,b.value,b.mode||'text');
-      if(!g.length){report.push({...b,ok:false,reason:'anchor not found'});continue;}
+      let g=[];
+      if(b.ids&&b.ids.length){ g=runs.filter(r=>r.id&&b.ids.includes(r.id));
+        if(!g.length){report.push({...b,ok:false,reason:'ids not found'});continue;}
+      } else { if(String(next)===String(b.value)){report.push({...b,ok:true,runs:0,unchanged:true});continue;}
+        g=findRun(runs,b.value,b.mode||'text');
+        if(!g.length){report.push({...b,ok:false,reason:'anchor not found'});continue;} }
       g.forEach((r,i)=>edits.push({start:r.start,end:r.end,html:setData(r,[i===0?esc(next):''])}));
-      report.push({...b,ok:true,runs:g.length,from:b.value,to:String(next)}); }
+      report.push({...b,ok:true,runs:g.length,from:b.value??b.ids,to:String(next)}); }
     edits.sort((a,b)=>b.start-a.start); let svg=baseSvgbind;
     for(const e of edits) svg=svg.slice(0,e.start)+e.html+svg.slice(e.end);
     return {svg,report}; }
+
+  function resolveParams(params, values){ const scope={}, out={};
+    for(const p of params){ const raw=values[p.id]!==undefined?values[p.id]:p.default;
+      const n=parseFloat(String(raw).replace(/,/g,'')); scope[p.id]=Number.isNaN(n)?0:n; out[p.id]=raw; }
+    for(let pass=0;pass<10;pass++){ let changed=false;
+      for(const p of params){ if(!p.formula) continue;
+        try{ const n=Function(...Object.keys(scope),`return (${p.formula});`)(...Object.values(scope));
+          const s=String(n); if(out[p.id]!==s){ out[p.id]=s; changed=true; } scope[p.id]=n; }catch{} }
+      if(!changed) break; }
+    return out; }
   // --------------------------------------------------------------------
 
   document.getElementById('tname').textContent = tpl.name || tpl.id;
-  const paramEls = {};
+  const paramEls = {}; const derived = {};
   function readParams(){ return Object.fromEntries(Object.entries(paramEls).map(([k,el])=>[k,el.value])); }
-  function renderNow(){ const {svg,report}=render(baseSvg, tpl.bindings, readParams());
+  function renderNow(){ const eff=resolveParams(tpl.params, readParams());
+    const {svg,report}=render(baseSvg, tpl.bindings, eff);
+    for(const [k,el] of Object.entries(derived)) el.value=eff[k];
     document.getElementById('sheet').innerHTML = svg;
     const ok=report.filter(r=>r.ok).length, bad=report.filter(r=>!r.ok);
     document.getElementById('count').textContent = `${ok}/${report.length} bound` + (bad.length?` · ${bad.length} skipped`:'');
@@ -108079,6 +108098,7 @@
   const pc=document.getElementById('params');
   for(const p of tpl.params){ const l=document.createElement('label'); l.textContent=p.label||p.id;
     const i=document.createElement('input'); i.type='text'; i.value=p.default??''; i.dataset.id=p.id;
+    if(p.formula){ i.readOnly=true; i.title='computed: '+p.formula; derived[p.id]=i; }
     i.addEventListener('input',renderNow); paramEls[p.id]=i; pc.appendChild(l); pc.appendChild(i); }
   document.getElementById('sample').onclick=()=>{ for(const [k,v] of Object.entries(sample)) if(paramEls[k]) paramEls[k].value=v; renderNow(); };
   document.getElementById('reset').onclick=()=>{ for(const p of tpl.params) paramEls[p.id].value=p.default??''; renderNow(); };
@@ -108089,6 +108109,43 @@
   // PDF viewer (browser-native, view only)
   const pdf=document.getElementById('pdf'), frame=document.getElementById('pdfview'), ph=document.getElementById('pdfph');
   pdf.onchange=()=>{ const f=pdf.files[0]; if(!f) return; frame.src=URL.createObjectURL(f); frame.style.display='block'; ph.style.display='none'; };
+
+  // ---- click-to-bind ----
+  const sheet = document.getElementById('sheet'), bindBtn = document.getElementById('bind');
+  let bindMode = false, bindRuns = null, bindLists = null;
+  const suggest = (v) => /SDN BHD$/i.test(v) ? 'customer' : /^LSB[-/]/i.test(v) ? 'drawingNo'
+    : /KG$/i.test(v) ? 'workingLoad' : /^[0-9.,]+$/.test(v) ? 'dim' : 'field';
+  bindBtn.onclick = () => {
+    bindMode = !bindMode; bindBtn.textContent = 'Bind mode: ' + (bindMode ? 'ON' : 'off');
+    sheet.style.cursor = bindMode ? 'crosshair' : '';
+    if (bindMode && !bindRuns) { bindRuns = textRuns(baseSvg); bindLists = orderedLists(bindRuns); }
+  };
+  sheet.addEventListener('click', async (ev) => {
+    if (!bindMode) return;
+    const el = ev.target.closest && ev.target.closest('text'); if (!el || !el.id) return;
+    const r = bindRuns.find((x) => x.id === el.id); if (!r) return;
+    // group of glyphs (rotated/per-glyph numbers), anchored by element id
+    let ids = [r.id];
+    if (/^[0-9.,]+$/.test(norm(r.text))) {
+      const TH = 12, coord = (x) => Math.abs(x.dir.b) > Math.abs(x.dir.a) ? x.y : x.x;
+      for (const list of bindLists) {
+        const i = list.indexOf(r); if (i < 0) continue;
+        let a = i, b = i;
+        while (a > 0 && /^[0-9.,]+$/.test(norm(list[a - 1].text)) && Math.abs(coord(list[a - 1]) - coord(list[a])) <= TH) a--;
+        while (b < list.length - 1 && /^[0-9.,]+$/.test(norm(list[b + 1].text)) && Math.abs(coord(list[b + 1]) - coord(list[b])) <= TH) b++;
+        ids = list.slice(a, b + 1).map((x) => x.id); break;
+      }
+    }
+    // show the value as currently displayed (edits applied), not the raw base text
+    const shown = ids.map((id) => { const e = sheet.querySelector('#' + CSS.escape(id)); return e ? e.textContent : ''; }).join('').trim();
+    const param = (window.prompt(`Add parameter\ncurrent value in drawing: ${JSON.stringify(shown)}\n\nname:`, suggest(shown)) || '').trim();
+    if (!param) return;
+    try {
+      const res = await fetch('/bind', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: tpl.id, param, label: param, value: shown, ids, mode: 'id' }) });
+      const j = await res.json(); if (!j.ok) throw new Error(j.error || 'failed');
+      location.reload();
+    } catch (e) { alert('Bind failed: ' + e.message); }
+  });
 
   renderNow();
 })();

@@ -20,7 +20,8 @@ export function textRuns(svg) {
     const { x, y } = xy(open);
     const mm = open.match(/matrix\(([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+)\)/);
     const dir = mm ? { a: +mm[1], b: +mm[2] } : { a: 1, b: 0 }; // local x-axis = text advance
-    runs.push({ start: m.index, end: m.index + raw.length, open, inner, data, text: unesc(data.join('')), x, y, dir });
+    const idm = open.match(/\bid="([^"]+)"/);
+    runs.push({ id: idm ? idm[1] : null, start: m.index, end: m.index + raw.length, open, inner, data, text: unesc(data.join('')), x, y, dir });
   }
   return runs;
 }
@@ -85,14 +86,50 @@ export function renderTemplate(baseSvg, bindings, params) {
   for (const b of bindings) {
     const next = params[b.param];
     if (next === undefined) { report.push({ ...b, ok: false, reason: 'no value' }); continue; }
-    if (String(next) === String(b.value)) { report.push({ ...b, ok: true, runs: 0, unchanged: true }); continue; }
-    const group = findRun(runs, b.value, b.mode || 'text');
-    if (!group.length) { report.push({ ...b, ok: false, reason: 'anchor not found' }); continue; }
+    let group = [];
+    if (b.ids && b.ids.length) {
+      // anchored by element id — stable across edits
+      group = runs.filter((r) => r.id && b.ids.includes(r.id));
+      if (!group.length) { report.push({ ...b, ok: false, reason: 'ids not found' }); continue; }
+    } else {
+      if (String(next) === String(b.value)) { report.push({ ...b, ok: true, runs: 0, unchanged: true }); continue; }
+      group = findRun(runs, b.value, b.mode || 'text');
+      if (!group.length) { report.push({ ...b, ok: false, reason: 'anchor not found' }); continue; }
+    }
     group.forEach((r, i) => edits.push({ start: r.start, end: r.end, html: setData(r, [i === 0 ? esc(next) : '']) }));
-    report.push({ ...b, ok: true, runs: group.length, from: b.value, to: String(next) });
+    report.push({ ...b, ok: true, runs: group.length, from: b.value ?? b.ids, to: String(next) });
   }
   edits.sort((a, b) => b.start - a.start); // apply back-to-front
   let svg = baseSvg;
   for (const e of edits) svg = svg.slice(0, e.start) + e.html + svg.slice(e.end);
   return { svg, report };
+}
+
+/**
+ * Resolve a params schema + raw input values into the effective value map.
+ * A param with a `formula` (e.g. "footprint + 2*guard") is computed from other
+ * params by id (numbers only), so editing one value recalculates its dependents.
+ */
+export function resolveParams(params, values = {}) {
+  const scope = {}, out = {};
+  for (const p of params) {
+    const raw = values[p.id] !== undefined ? values[p.id] : p.default;
+    const n = parseFloat(String(raw).replace(/,/g, ''));
+    scope[p.id] = Number.isNaN(n) ? 0 : n;
+    out[p.id] = raw;
+  }
+  for (let pass = 0; pass < 10; pass++) {
+    let changed = false;
+    for (const p of params) {
+      if (!p.formula) continue;
+      try {
+        const n = Function(...Object.keys(scope), `return (${p.formula});`)(...Object.values(scope));
+        const s = String(n);
+        if (out[p.id] !== s) { out[p.id] = s; changed = true; }
+        scope[p.id] = n;
+      } catch { /* leave as-is */ }
+    }
+    if (!changed) break;
+  }
+  return out;
 }

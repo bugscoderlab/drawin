@@ -13,6 +13,7 @@ import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { resolve, join, basename } from 'node:path';
 import { tmpdir } from 'node:os';
 import { scaffold } from './eval/scaffold.mjs';
+import { buildEditor } from './eval/makeEditor.mjs';
 
 const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Ladder drawing — upload</title>
@@ -134,6 +135,22 @@ export function serve(port = 8123) {
           props: r.props.map((p) => ({ id: p.id, label: p.label, mode: p.mode, value: p.value })),
           editor: `/editor/${r.id}`,
         }));
+      }
+
+      if (req.method === 'POST' && url.pathname === '/bind') {
+        const body = JSON.parse((await readBody(req)).toString() || '{}');
+        const id = slug(body.id || '');
+        const tp = resolve('templates', id, 'template.json');
+        if (!existsSync(tp)) return send(res, 404, 'application/json', JSON.stringify({ ok: false, error: 'unknown template' }));
+        const t = JSON.parse(readFileSync(tp, 'utf8'));
+        if (!t.params.some((p) => p.id === body.param)) t.params.push({ id: body.param, label: body.label || body.param, type: 'text', default: body.value });
+        const binding = body.ids && body.ids.length
+          ? { ids: body.ids, param: body.param, mode: 'id' }
+          : { value: body.value, param: body.param, mode: body.mode || 'text' };
+        if (!t.bindings.some((b) => b.param === body.param)) t.bindings.push(binding);
+        writeFileSync(tp, JSON.stringify(t, null, 2) + '\n');
+        buildEditor(resolve('templates', id));
+        return send(res, 200, 'application/json', JSON.stringify({ ok: true, id, param: body.param, value: body.value, mode: body.mode }));
       }
 
       if (req.method === 'GET' && url.pathname.startsWith('/editor/')) {

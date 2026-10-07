@@ -98,5 +98,14 @@
       "mode": "group"
     }
   ],
-  "sample": {}
+  "sample": {
+    "drawingNo": "LSB/2607/004/FHL/R99",
+    "customer": "ACME TOWER CRANES SDN BHD",
+    "workingLoad": "200KG",
+    "productName": "ALUMINIUM CAT LADDER BODY,HANDRAIL & CAGE RING TYPE - REV B",
+    "dim1": "550.00",
+    "dim2": "7315.00",
+    "dim3": "990.00",
+    "dim4": "5896.44"
+  }
 }
