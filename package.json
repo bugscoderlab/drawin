@@ -1,0 +1,11 @@
+{
+  "name": "laddertech-drawing",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Parametric Laddertech ladder/trolley/cage drawing generator + PDF extraction CLI",
+  "scripts": {
+    "test": "node --test",
+    "probe": "node src/eval/tryExtractLLM.mjs"
+  }
+}

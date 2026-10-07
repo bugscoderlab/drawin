@@ -1,0 +1,31 @@
+// Build a self-contained editor/preview HTML for a template.
+//   node src/eval/makeEditor.mjs templates/cage-fhl
+// writes preview/<id>-editor.html (base art + params + binding engine inlined).
+
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { resolve, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+export function buildEditor(tplDir = 'templates/trolley-slt') {
+  const dir = resolve(tplDir);
+  const tpl = JSON.parse(readFileSync(join(dir, 'template.json'), 'utf8'));
+  const svgPath = join(dir, tpl.base?.svg || 'base.clean.svg');
+  if (!existsSync(svgPath)) throw new Error(`missing ${svgPath} — run the scaffold/proof first to produce the cleaned base`);
+  const svg = readFileSync(svgPath, 'utf8');
+
+  const shell = readFileSync(resolve('src/templates/editor.template.html'), 'utf8');
+  const html = shell
+    .replace('__ID__', tpl.id)
+    .replace('__TEMPLATE_JSON__', () => JSON.stringify(tpl))
+    .replace('__BASE_SVG__', () => svg);
+
+  mkdirSync(resolve('preview'), { recursive: true });
+  const out = join(resolve('preview'), `${tpl.id}-editor.html`);
+  writeFileSync(out, html);
+  return { out, bytes: html.length, id: tpl.id };
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const r = buildEditor(process.argv[2]);
+  console.log(`wrote ${r.out}  (${(r.bytes / 1e6).toFixed(1)} MB)`);
+}

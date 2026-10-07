@@ -1,0 +1,135 @@
+{
+  "id": "lsb-2607-003-rhc-r00",
+  "name": "ALUMINIUM SAFETY LADDER TROLLEY 9 STEP (CUSTOMIZED)",
+  "source": "LSB-2607-003-RHC-R00.pdf",
+  "match": {},
+  "base": {
+    "svg": "base.clean.svg"
+  },
+  "params": [
+    {
+      "id": "drawingNo",
+      "label": "Drawing No.",
+      "type": "text",
+      "default": "LSB-2607-003-RHC-R00"
+    },
+    {
+      "id": "customer",
+      "label": "Customer",
+      "type": "text",
+      "default": "RAHABCO ENGINEERING & CONSTRUCTION SDN BHD"
+    },
+    {
+      "id": "workingLoad",
+      "label": "Working Load",
+      "type": "text",
+      "default": "150KG"
+    },
+    {
+      "id": "productName",
+      "label": "Title",
+      "type": "text",
+      "default": "ALUMINIUM SAFETY LADDER TROLLEY 9 STEP (CUSTOMIZED)"
+    },
+    {
+      "id": "dim1",
+      "label": "Dimension 1",
+      "type": "text",
+      "default": "980"
+    },
+    {
+      "id": "dim2",
+      "label": "Dimension 2",
+      "type": "text",
+      "default": "2372"
+    },
+    {
+      "id": "dim3",
+      "label": "Dimension 3",
+      "type": "text",
+      "default": "700"
+    },
+    {
+      "id": "dim4",
+      "label": "Dimension 4",
+      "type": "text",
+      "default": "2500"
+    },
+    {
+      "id": "dim5",
+      "label": "Dimension 5",
+      "type": "text",
+      "default": "1000"
+    },
+    {
+      "id": "dim6",
+      "label": "Dimension 6",
+      "type": "text",
+      "default": "305"
+    },
+    {
+      "id": "dim7",
+      "label": "Dimension 7",
+      "type": "text",
+      "default": "103"
+    }
+  ],
+  "bindings": [
+    {
+      "value": "LSB-2607-003-RHC-R00",
+      "param": "drawingNo",
+      "mode": "text"
+    },
+    {
+      "value": "RAHABCO ENGINEERING & CONSTRUCTION SDN BHD",
+      "param": "customer",
+      "mode": "text"
+    },
+    {
+      "value": "150KG",
+      "param": "workingLoad",
+      "mode": "text"
+    },
+    {
+      "value": "ALUMINIUM SAFETY LADDER TROLLEY 9 STEP (CUSTOMIZED)",
+      "param": "productName",
+      "mode": "text"
+    },
+    {
+      "value": "980",
+      "param": "dim1",
+      "mode": "group"
+    },
+    {
+      "value": "2372",
+      "param": "dim2",
+      "mode": "group"
+    },
+    {
+      "value": "700",
+      "param": "dim3",
+      "mode": "group"
+    },
+    {
+      "value": "2500",
+      "param": "dim4",
+      "mode": "group"
+    },
+    {
+      "value": "1000",
+      "param": "dim5",
+      "mode": "group"
+    },
+    {
+      "value": "305",
+      "param": "dim6",
+      "mode": "group"
+    },
+    {
+      "value": "103",
+      "param": "dim7",
+      "mode": "group"
+    }
+  ],
+  "sample": {}
+}

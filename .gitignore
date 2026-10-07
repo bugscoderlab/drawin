@@ -1,0 +1,8 @@
+# Local secrets and build output — never commit this file
+.env
+.env.local
+node_modules/
+vendor/
+out/
+dist/
+.DS_Store

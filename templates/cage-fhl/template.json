@@ -1,0 +1,43 @@
+{
+  "id": "cage-fhl",
+  "name": "Cat Ladder with Safety Cage",
+  "source": "LSB-2607-004-FHL-R00.pdf",
+  "match": { "titleKeywords": ["CAGE"], "drawingNoPattern": "^LSB/" },
+  "base": { "svg": "base.clean.svg", "width": 1122.5601, "height": 793.76001 },
+  "params": [
+    { "id": "customer", "label": "Customer", "type": "text", "default": "FHL CONSTRUCTION SDN BHD" },
+    { "id": "drawingNo", "label": "Drawing No.", "type": "text", "default": "LSB/2607/004/FHL/R00" },
+    { "id": "workingLoad", "label": "Working load", "type": "text", "default": "150KG" },
+    { "id": "productName", "label": "Title", "type": "text", "default": "ALUMINIUM CAT LADDER BODY,HANDRAIL & CAGE RING TYPE" },
+    { "id": "topWidth", "label": "Top width", "type": "text", "default": "500.00" },
+    { "id": "ladderWidth", "label": "Ladder width", "type": "text", "default": "450.00" },
+    { "id": "cageHeight", "label": "Cage height", "type": "text", "default": "5360.40" },
+    { "id": "floorToLanding", "label": "Floor to landing", "type": "text", "default": "6650.00" },
+    { "id": "cageStart", "label": "Cage start from floor", "type": "text", "default": "2053.60" },
+    { "id": "bottomRung", "label": "Bottom rung clearance", "type": "text", "default": "146.00" }
+  ],
+  "bindings": [
+    { "value": "FHL CONSTRUCTION SDN BHD", "param": "customer", "mode": "text" },
+    { "value": "LSB/2607/004/FHL/R00", "param": "drawingNo", "mode": "text" },
+    { "value": "150KG", "param": "workingLoad", "mode": "text" },
+    { "value": "ALUMINIUM CAT LADDER BODY,HANDRAIL & CAGE RING TYPE", "param": "productName", "mode": "text" },
+    { "value": "500.00", "param": "topWidth", "mode": "group" },
+    { "value": "450.00", "param": "ladderWidth", "mode": "group" },
+    { "value": "5360.40", "param": "cageHeight", "mode": "group" },
+    { "value": "6650.00", "param": "floorToLanding", "mode": "group" },
+    { "value": "2053.60", "param": "cageStart", "mode": "group" },
+    { "value": "146.00", "param": "bottomRung", "mode": "group" }
+  ],
+  "sample": {
+    "customer": "ACME TOWER CRANES SDN BHD",
+    "drawingNo": "LSB/2607/777/ACME/R02",
+    "workingLoad": "200KG",
+    "productName": "ALUMINIUM CAT LADDER BODY,HANDRAIL & CAGE RING TYPE B",
+    "topWidth": "600.00",
+    "ladderWidth": "500.00",
+    "cageHeight": "5800.00",
+    "floorToLanding": "7000.00",
+    "cageStart": "2200.00",
+    "bottomRung": "160.00"
+  }
+}

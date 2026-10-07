@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Template preview — __ID__</title>
+<style>
+  :root{--ink:#17283a;--navy:#17314d;--orange:#f58220;--line:#cad4dd;--muted:#657484;--soft:#f7f9fb;--bg:#edf1f4}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 Arial,Helvetica,sans-serif}
+  header{background:var(--navy);color:#fff;padding:14px 20px}
+  header b{font-size:1.05rem}
+  header span{opacity:.75;font-size:.85rem;margin-left:8px}
+  .app{display:grid;grid-template-columns:340px 1fr;min-height:calc(100vh - 52px)}
+  .panel{background:#fff;border-right:1px solid var(--line);padding:18px;overflow:auto}
+  .panel h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:16px 0 8px}
+  label{display:block;font-size:.78rem;font-weight:700;color:#425466;margin:10px 0 4px}
+  input[type=text],input[type=file]{width:100%;min-height:38px;border:1px solid #b9c6d1;border-radius:7px;padding:7px 9px;font:inherit}
+  input[type=file]{padding:5px;background:var(--soft)}
+  button{border:0;border-radius:8px;min-height:40px;padding:9px 12px;font-weight:700;cursor:pointer;width:100%;margin-top:10px}
+  .primary{background:var(--orange);color:#fff}.primary:hover{background:#df6f12}
+  .ghost{background:#e7edf2;color:var(--navy)}.ghost:hover{background:#dbe4eb}
+  .stage{padding:22px;overflow:auto}
+  .sheet{background:#fff;box-shadow:0 14px 40px rgba(20,45,67,.14);margin:auto;max-width:900px}
+  .sheet svg{display:block;width:100%;height:auto}
+  .note{background:#fff4df;border:1px solid #efcf98;color:#83520b;border-radius:9px;padding:10px 12px;font-size:.8rem;margin-bottom:16px}
+  .pdfbox{max-width:900px;margin:0 auto 18px;background:#fff;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+  .pdfbox iframe{width:100%;height:520px;border:0;display:none}
+  .pdfbox .ph{padding:14px;color:var(--muted);font-size:.85rem}
+  .row{display:flex;gap:10px}
+  .badge{display:inline-block;background:#e7f6ec;color:#1a6535;border-radius:999px;padding:2px 9px;font-size:.72rem;font-weight:700}
+</style>
+</head>
+<body>
+<header><b>Template preview</b><span id="tname"></span> <span class="badge" id="count"></span></header>
+<main class="app">
+  <aside class="panel">
+    <div class="note">
+      This page runs the <b>binding</b> step in your browser. Converting a PDF to editable art
+      needs Inkscape/poppler, so that stays in the CLI — use the PDF panel on the right to view a source.
+    </div>
+    <h2>Source PDF (view only)</h2>
+    <input type="file" id="pdf" accept="application/pdf">
+    <h2>Values</h2>
+    <div id="params"></div>
+    <div class="row">
+      <button class="ghost" id="sample">Sample changes</button>
+      <button class="ghost" id="reset">Reset</button>
+    </div>
+    <button class="primary" id="download">Download SVG</button>
+  </aside>
+  <section class="stage">
+    <div class="pdfbox"><div class="ph" id="pdfph">Drop or choose a PDF to view it here.</div><iframe id="pdfview"></iframe></div>
+    <div class="sheet" id="sheet"></div>
+  </section>
+</main>
+
+<script id="tpl" type="application/json">__TEMPLATE_JSON__</script>
+<script id="base" type="text/plain">__BASE_SVG__</script>
+<script>
+(() => {
+  const tpl = JSON.parse(document.getElementById('tpl').textContent);
+  let baseSvg = document.getElementById('base').textContent;
+  const sample = tpl.sample || {};
+
+  // ---- binding engine (faithful port of src/templates/render.mjs) ----
+  const TEXT_RE = /<text\b[^>]*>[\s\S]*?<\/text>/g;
+  const norm = (s) => String(s).replace(/\s+/g, '');
+  const unesc = (s) => String(s).replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&amp;/g,'&');
+  const esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  function xy(open){ const m=open.match(/matrix\(([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+)\)/);
+    if(m) return {x:+m[5], y:+m[6], a:+m[1], b:+m[2]};
+    const x=open.match(/\bx="(-?[\d.]+)"/), y=open.match(/\by="(-?[\d.]+)"/);
+    return {x:x?+x[1]:0, y:y?+y[1]:0, a:1, b:0}; }
+  function textRuns(svg){ const runs=[]; for(const m of svg.matchAll(TEXT_RE)){ const raw=m[0];
+    const open=raw.match(/^<text\b[^>]*>/)[0]; const inner=raw.slice(open.length, raw.length-7);
+    const data=[...inner.matchAll(/>([^<]*)</g)].map(x=>x[1]); const p=xy(open);
+    runs.push({start:m.index,end:m.index+raw.length,open,inner,data,text:unesc(data.join('')),x:p.x,y:p.y,dir:{a:p.a,b:p.b}}); }
+    return runs; }
+  function orderedLists(runs){ const H=[],Vdn=[],Vup=[];
+    for(const r of runs){ const v=Math.abs(r.dir.b)>Math.abs(r.dir.a);
+      if(!v)H.push(r); else if(r.dir.b<0)Vdn.push(r); else Vup.push(r); }
+    H.sort((p,q)=>(p.y-q.y)||(p.x-q.x)); Vdn.sort((p,q)=>(p.x-q.x)||(q.y-p.y)); Vup.sort((p,q)=>(p.x-q.x)||(p.y-q.y));
+    return [H,Vdn,Vup]; }
+  function findRun(runs,value,mode){ const t=norm(value);
+    if(mode==='text') return runs.filter(r=>norm(r.text)===t);
+    for(const list of orderedLists(runs)){ for(let i=0;i<list.length;i++){ let acc='';
+      for(let j=i;j<list.length;j++){ acc+=norm(list[j].text);
+        if(acc===t) return list.slice(i,j+1); if(acc.length>=t.length) break; } } }
+    return []; }
+  function setData(run,values){ let k=0; const inner=run.inner.replace(/>([^<]*)</g,()=>`>${values[k++]??''}<`); return run.open+inner+'</text>'; }
+  function render(baseSvgbind, bindings, params){ const runs=textRuns(baseSvgbind); const edits=[]; const report=[];
+    for(const b of bindings){ const next=params[b.param];
+      if(next===undefined){report.push({...b,ok:false,reason:'no value'});continue;}
+      if(String(next)===String(b.value)){report.push({...b,ok:true,runs:0,unchanged:true});continue;}
+      const g=findRun(runs,b.value,b.mode||'text');
+      if(!g.length){report.push({...b,ok:false,reason:'anchor not found'});continue;}
+      g.forEach((r,i)=>edits.push({start:r.start,end:r.end,html:setData(r,[i===0?esc(next):''])}));
+      report.push({...b,ok:true,runs:g.length,from:b.value,to:String(next)}); }
+    edits.sort((a,b)=>b.start-a.start); let svg=baseSvgbind;
+    for(const e of edits) svg=svg.slice(0,e.start)+e.html+svg.slice(e.end);
+    return {svg,report}; }
+  // --------------------------------------------------------------------
+
+  document.getElementById('tname').textContent = tpl.name || tpl.id;
+  const paramEls = {};
+  function readParams(){ return Object.fromEntries(Object.entries(paramEls).map(([k,el])=>[k,el.value])); }
+  function renderNow(){ const {svg,report}=render(baseSvg, tpl.bindings, readParams());
+    document.getElementById('sheet').innerHTML = svg;
+    const ok=report.filter(r=>r.ok).length, bad=report.filter(r=>!r.ok);
+    document.getElementById('count').textContent = `${ok}/${report.length} bound` + (bad.length?` · ${bad.length} skipped`:'');
+    return svg; }
+
+  const pc=document.getElementById('params');
+  for(const p of tpl.params){ const l=document.createElement('label'); l.textContent=p.label||p.id;
+    const i=document.createElement('input'); i.type='text'; i.value=p.default??''; i.dataset.id=p.id;
+    i.addEventListener('input',renderNow); paramEls[p.id]=i; pc.appendChild(l); pc.appendChild(i); }
+  document.getElementById('sample').onclick=()=>{ for(const [k,v] of Object.entries(sample)) if(paramEls[k]) paramEls[k].value=v; renderNow(); };
+  document.getElementById('reset').onclick=()=>{ for(const p of tpl.params) paramEls[p.id].value=p.default??''; renderNow(); };
+  document.getElementById('download').onclick=()=>{ const svg=renderNow();
+    const blob=new Blob(['<?xml version="1.0" encoding="UTF-8"?>\n'+svg],{type:'image/svg+xml'});
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=(tpl.id||'drawing')+'.svg'; a.click(); URL.revokeObjectURL(a.href); };
+
+  // PDF viewer (browser-native, view only)
+  const pdf=document.getElementById('pdf'), frame=document.getElementById('pdfview'), ph=document.getElementById('pdfph');
+  pdf.onchange=()=>{ const f=pdf.files[0]; if(!f) return; frame.src=URL.createObjectURL(f); frame.style.display='block'; ph.style.display='none'; };
+
+  renderNow();
+})();
+</script>
+</body>
+</html>
