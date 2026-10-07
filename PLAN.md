@@ -1,9 +1,9 @@
 # Laddertech Ladder Drawing — PDF → SVG Plan
 
-Status: **plan, not yet implemented**
+Status: **in progress — template system built & proven; Phase 0 core rewire parked**
 Folder: `/Users/z/Documents/drawin`
 Owner inputs: 3 reference PDFs in this folder, 1 existing HTML generator
-Last updated: 2026-10-07
+Last updated: 2026-10-08
 
 ---
 
@@ -22,6 +22,21 @@ The existing HTML generator becomes **a template renderer/editor**, not the cent
 Runs **headless (CLI, for scale)** and **in-browser (the HTML, for interactive use)**.
 
 **LLM: one vision pass, merged with rules** — to read title blocks and dimension callouts on arbitrary layouts (its strength). It never classifies the product and never generates geometry.
+
+---
+
+## 1a. Built so far (2026-10-08)
+
+- **Converter chain + outline cleanup** — `ladder scaffold` converts (Inkscape → pdftocairo fallback) and hides coincident outline duplicates.
+- **Merged extractor eval** — rules + one vision pass = 34/34 on the corpus; scoreboard in `src/eval/eval.mjs`.
+- **Template L1 renderer** — `src/templates/render.mjs`: single-run, per-glyph group, and rotated (bottom-to-top) bindings; byte-identical in CLI and browser.
+- **Auto-propose bindings** — `src/eval/scaffold.mjs` proposes the title block + dimensions (conservative on purpose).
+- **`ladder serve`** — local upload → scaffold → live editor bridge (`src/serve.mjs`); no key needed.
+- **Click-to-bind (id-anchored)** — click any text/number in the editor to add a parameter, anchored by element id so edits don't break it; persisted via `POST /bind`.
+- **Formula layer** — params may carry `formula`; editing one value recalculates dependents (read-only, auto-updated fields).
+- **Samples** — scaffold generates a `sample` so "Sample changes" works on any upload.
+
+**Not built:** Phase 0 HTML rewire (0.7), P1 pdf.js extractor, L2 geometry, `ladder batch`, MCP tools, the `009` conversion fix.
 
 ---
 
@@ -183,6 +198,8 @@ A **template** turns one example drawing into a reusable parametric one — **bi
 }
 ```
 
+Bindings today: `{"value": "…", "param": "…", "mode": "text"|"group"}` (anchor by text), or `{"ids": ["text1481", …], "param": "…", "mode": "id"}` (anchor by element id — stable across edits). A param may add `"formula": "footprint * 2"` to be computed from other params.
+
 **Rendering levels** (a template may mix them):
 - **L1 — text:** replace the string of bound text nodes (title block, values). Covers most fields; trivial.
 - **L2 — geometry:** move/resize bound nodes so dimension lines and parts actually track the value.
@@ -330,8 +347,8 @@ Every pass sees the **whole page** (no cropping).
 ### Phase 1C — Template system (authoring + L1/L2 rendering)
 
 - [ ] **1C.1** `src/templates/registry.mjs`: load `templates/*/template.json`, match by signals (title keywords, drawing-no pattern, dimension signature), return the winner or `null`.
-- [ ] **1C.2** `src/templates/render.mjs`: **L1** text binding — load `base.svg`, replace the string of each bound node; **L2** geometry modes (`lineEndX`, `translateX/Y`, `rectWidth`, …) for dimension lines that must move.
-- [ ] **1C.3** `src/templates/authoring.mjs`: from a converted SVG + generic metadata, build the **text inventory** `{id,string,bbox}` and **auto-propose bindings** (customer, drawing no., each dimension value) with confidence.
+- [x] **1C.2** `src/templates/render.mjs`: **L1** text binding — replace the string of bound nodes. Handles single runs, per-glyph groups, and rotated (bottom-to-top) runs; also **id-anchored bindings** (stable across edits) and **formula params**. L2 geometry modes (`lineEndX`, …) **not built**. *(Built.)*
+- [x] **1C.3** `src/templates/authoring.mjs`: outline-duplicate cleanup via bbox coincidence (`inkscape --query-all`); binding auto-proposal lives in `scaffold.mjs`. *(Built.)*
 - [x] **1C.4** `ladder scaffold <pdf>` — convert (Inkscape), hide outline duplicates, **auto-propose bindings** (title block + dimensions), write `templates/<id>/template.json`, and build the editor HTML. *(Built: `bin/ladder.mjs scaffold|editor|proof`.)*
 - [ ] **1C.5** Seed the registry with `cat`, `cage`, `trolley` — `cage`/`trolley` as **L3** (existing `core/render`) and/or **L1/L2** over their converted art.
 - [ ] **1C.6** `ladder render <template> params.json -o out.svg`; the HTML gains a **Template** mode (pick template → edit params → export).
@@ -350,7 +367,7 @@ Every pass sees the **whole page** (no cropping).
   - `ladder verify in.pdf` — compare extracted vs generated dimensions
   - `ladder eval` — A/B scoreboard
 - [ ] **2.2** `src/convert/convert.js`: **fallback chain** — Inkscape (timeout) → pdftocairo. Note pdftocairo outlines text; Inkscape keeps it.
-- [ ] **2.3** HTML: add **Load PDF** → extract → if a template matches, edit its params and export; otherwise show the **converted SVG + metadata**. Load `vendor/pdf.min.js` + core + templates as classic scripts. (LLM stays CLI-side; see §6.)
+- [x] **2.3** **Superseded by `ladder serve`.** The generated editor loads a template, shows the source PDF (view-only), edits params live (with formulas), supports click-to-bind, and exports SVG. Browser-side extraction of a *new* PDF still needs the server (conversion is native). *(Built.)*
 - [ ] **2.4** Add **Download converted SVG** in the HTML (via the CLI/convert path, or best-effort in-browser).
 - [ ] **2.5** MCP: add `import_ladder_pdf` alongside `configure_ladder_drawing`, returning extracted params + confidence.
 - [ ] **2.6** **`file://` spike (do early):** confirm legacy UMD pdf.js + worker load from disk. Fallbacks: (a) local server (`python3 -m http.server` / `npx serve`); (b) no-worker/main-thread path; (c) CLI ingest → browser reads JSON.
@@ -430,7 +447,12 @@ export LADDER_LLM_API_KEY=$(security find-generic-password -a laddertech -s LADD
 brew install poppler            # pdftocairo / pdftotext / pdfinfo  (DONE 2026-10-07)
 npm install                     # pdfjs-dist, dotenv, test tooling
 
-# target UX once built
+# current
+node bin/ladder.mjs serve                       # upload → scaffold → live editor at :8123
+node bin/ladder.mjs scaffold "file.pdf"         # no server: build template + editor HTML
+node bin/ladder.mjs proof templates/<id>        # before/after render check
+
+# target UX (not all built)
 node bin/ladder.mjs convert "LSB-2607-003-RHC-R00.pdf" -o converted.svg
 node bin/ladder.mjs extract "LSB-2607-003-RHC-R00.pdf" -o params.json
 node bin/ladder.mjs extract "..." --llm-whole -o params.json   # force vision for all fields
