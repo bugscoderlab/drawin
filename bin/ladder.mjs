@@ -17,7 +17,9 @@ const usage = () => {
   node bin/ladder.mjs render   <templateId> [params.json] [-o out.svg]
   node bin/ladder.mjs convert  <file.pdf> -o out.svg [--converter auto|inkscape|pdftocairo]
   node bin/ladder.mjs extract  <file.pdf> [-o params.json] [--llm-whole|--no-llm]
-  node bin/ladder.mjs eval     [file.pdf ...] [--with-text] [--json]`);
+  node bin/ladder.mjs eval     [file.pdf ...] [--with-text] [--json]
+  node bin/ladder.mjs generate <params.json> [-o drawing.svg]
+  node bin/ladder.mjs verify   <file.pdf> [--no-llm] [--strict]`);
 };
 
 try {
@@ -120,6 +122,35 @@ try {
             + (misses.length ? ` — missed: ${misses.map((x) => x.field).join(', ')}` : ''));
         }
       }
+      break;
+    }
+    case 'generate': {
+      const args = process.argv.slice(3);
+      const oIdx = args.indexOf('-o');
+      const out = oIdx >= 0 ? args[oIdx + 1] : null;
+      const [paramsFile] = args.filter((a, i) => a !== '-o' && args[i - 1] !== '-o');
+      if (!paramsFile) { usage(); process.exit(1); }
+      const { generateFromExtract } = await import('../src/pipeline.mjs');
+      const extract = JSON.parse(readFileSync(resolve(paramsFile), 'utf8'));
+      const g = generateFromExtract(extract, { templatesDir: resolve('templates') });
+      if (g.error) throw new Error(g.error);
+      if (out) writeFileSync(out, g.svg + '\n'); else console.log(g.svg);
+      console.error(`generated via ${g.via}${g.bound?.length ? ` — bound: ${g.bound.join(', ')}` : ''}${g.unbound?.length ? ` — defaults: ${g.unbound.join(', ')}` : ''}`);
+      break;
+    }
+    case 'verify': {
+      const args = process.argv.slice(3);
+      const strict = args.includes('--strict');
+      const noLlm = args.includes('--no-llm');
+      const [pdf] = args.filter((a) => !a.startsWith('--'));
+      if (!pdf) { usage(); process.exit(1); }
+      const { verifyPdf } = await import('../src/pipeline.mjs');
+      const r = await verifyPdf(resolve(pdf), { llm: noLlm ? 'off' : 'auto', templatesDir: resolve('templates') });
+      console.log(`verify ${r.extract.file}: module=${r.extract.module} via=${r.via} — dimensions ${r.ok}/${r.total} present in the generated drawing`);
+      for (const c of r.checks) console.log(`  ${c.ok ? '✓' : '✗'} ${c.field} = ${c.value}${c.where ? `  (${c.where})` : c.reason ? `  (${c.reason})` : ''}`);
+      if (r.skipped.length) console.log(`  skipped (non-dimension): ${r.skipped.join(', ')}`);
+      if (r.extract.warnings.length) console.log(`  warnings: ${r.extract.warnings.join('; ')}`);
+      if (strict && r.ok < r.total) process.exit(1);
       break;
     }
     default:

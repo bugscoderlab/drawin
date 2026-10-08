@@ -16,7 +16,8 @@ export function textRuns(svg) {
     const raw = m[0];
     const open = raw.match(/^<text\b[^>]*>/)[0];
     const inner = raw.slice(open.length, raw.length - '</text>'.length);
-    const data = [...inner.matchAll(/>([^<]*)</g)].map((x) => x[1]);
+    const tagged = [...inner.matchAll(/>([^<]*)</g)].map((x) => x[1]);
+    const data = tagged.length ? tagged : [inner]; // bare <text>value</text> (core renderer) or <tspan> runs
     const { x, y } = xy(open);
     const mm = open.match(/matrix\(([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+)\)/);
     const dir = mm ? { a: +mm[1], b: +mm[2] } : { a: 1, b: 0 }; // local x-axis = text advance
