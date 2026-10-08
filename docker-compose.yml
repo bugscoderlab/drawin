@@ -4,6 +4,10 @@ services:
   app:
     build: .
     environment:
+      # Publishing a port reaches the container via its external interface, so
+      # the server must bind all interfaces INSIDE the container. (Bare-metal
+      # default stays 127.0.0.1 — see issue #2.)
+      - HOST=0.0.0.0
       - UPLOAD_TOKEN=${UPLOAD_TOKEN:-}   # put UPLOAD_TOKEN=<token> in the gitignored .env to require it
     ports:
       - "8123:8123"

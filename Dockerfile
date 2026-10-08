@@ -1,11 +1,32 @@
 # drawin — all-in-one image for the ladder-drawing server.
-# Node 22 + Inkscape (PDF→SVG, keeps text) + poppler (fallback/​text tools).
-# Zero npm deps — nothing to install beyond the system packages.
-FROM node:22-bookworm-slim
+# Ubuntu 26.04 for the toolchain the suite is verified against (Inkscape 1.4.x,
+# poppler 26.x — bookworm's Inkscape 1.2 / poppler 22 shift corpus extraction
+# results). Node 22 is copied from the official image. Zero runtime npm deps —
+# nothing to install beyond the system packages.
+FROM node:22-bookworm-slim AS node
+FROM ubuntu:26.04
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      inkscape poppler-utils fontconfig fonts-dejavu-core \
-    && rm -rf /var/lib/apt/lists/*
+COPY --from=node /usr/local /usr/local
+
+# font-rename helper, baked into /usr/local/bin before the apt layer uses it
+COPY scripts/make-arialmt-fonts.py /usr/local/bin/make-arialmt-fonts.py
+
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      inkscape poppler-utils ghostscript fontconfig fonts-dejavu-core fonts-liberation \
+      python3 python3-fonttools \
+    && python3 /usr/local/bin/make-arialmt-fonts.py /usr/share/fonts/truetype /usr/local/share/fonts/arialmt \
+    && DEBIAN_FRONTEND=noninteractive apt-get purge -y python3-fonttools \
+    && DEBIAN_FRONTEND=noninteractive apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && fc-cache -f >/dev/null 2>&1
+
+# The corpus PDFs name "ArialMT"; stock Linux lacks it and Inkscape then
+# outlines all text (see VPS-NOTES.md / wiki/Conversion.md). The step above
+# installs fonts literally NAMED ArialMT (Liberation Sans renamed in the
+# name table) — a fontconfig alias is not enough for Inkscape's PDF import,
+# which matches the embedded font name exactly.
+
+RUN useradd --create-home node
 
 ENV NODE_ENV=production \
     PORT=8123 \

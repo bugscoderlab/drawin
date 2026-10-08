@@ -23,9 +23,33 @@ jobs:
       - name: Tests (zero deps; converter tests skip when tools absent)
         run: npm test
 
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build image (same Dockerfile the VPS deploy runs)
+        run: docker build -t drawin:ci .
+      - name: Full suite inside the image (real Inkscape + poppler; pdfjs installed for the test run)
+        # root: the runtime image's /app dir is root-owned (contents are node-owned);
+        # npm ci needs to create node_modules there. Runtime (USER node) is unaffected.
+        run: docker run --rm --user root drawin:ci sh -c "npm ci --no-audit --no-fund && npm test"
+      - name: Server smoke boot
+        run: |
+          set -e
+          # HOST=0.0.0.0: the published port reaches the container on its
+          # external interface; the bare-metal 127.0.0.1 default (#2) would
+          # bind loopback inside the container and never accept the mapping.
+          cid=$(docker run -d -p 8123:8123 -e HOST=0.0.0.0 drawin:ci)
+          trap 'docker rm -f "$cid" >/dev/null' EXIT
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8123/ >/dev/null 2>&1; then echo "server healthy after ${i}s"; exit 0; fi
+            sleep 1
+          done
+          echo "server did not become healthy"; docker logs "$cid"; exit 1
+
   deploy:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    needs: [check]
+    needs: [check, docker]
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to VPS
