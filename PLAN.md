@@ -269,8 +269,8 @@ Decided from the measurements below (rules 79% · vision 88% · **merged 100%**)
 - [ ] **1B.4** **Merge policy:** rules win whenever they return a value; the single vision pass fills the blanks; validate every value against `modules.js`; flag low-confidence fields. *(Implemented in `src/eval/eval.mjs` as `merged`.)*
 - [ ] **1B.5** **Cost control:** call vision only when rules leave blanks (`--llm-whole` to force); cache by PDF hash + prompt hash.
 - [ ] **1B.6** **No second call.** A verify/re-read pass adds cost and can blank the page (measured 65%). One pass, full image.
-- [ ] **1B.7** `src/eval/eval.mjs` + `ladder eval`: per-field scoreboard (rules / text / vision / merged). *(Built.)*
-- [ ] **1B.8** Verify every fixture value against a high-DPI crop **before** calling a miss a model failure — the `3210`→`3200` "failure" was a wrong fixture.
+- [x] **1B.7** `src/eval/scoreboard.mjs` (shared scoring core) + `src/eval/eval.mjs` (developer table) + `ladder eval [--with-text] [--json]`: per-field scoreboard (rules / text / vision / merged). Rules-only run reproduces the measured 27/34 (79%). *(Built.)*
+- [x] **1B.8** Ground-truth discipline: `truth.mjs` fixtures were verified against high-DPI crops (the `3210`→`3200` correction happened there); new fixtures must be crop-verified before being trusted. *(Process — enforced at authoring time.)*
 
 **Acceptance:** merged scores **34/34 (100%)** on the corpus, stable across runs.
 
@@ -355,7 +355,7 @@ Every pass sees the **whole page** (no cropping).
 
 ### Phase 2 — Both front ends
 
-- [x] **2.1 (partial)** CLI `bin/ladder.mjs`: `convert` ✅, `extract` ✅ (`--llm-whole` forces vision for all fields; default fills only rule blanks when a key is configured; `--no-llm` rules-only), `render` ✅, `serve/scaffold/editor/proof` ✅. Remaining: `generate`, `verify`, `eval`, `batch`.
+- [x] **2.1 (partial)** CLI `bin/ladder.mjs`: `convert` ✅, `extract` ✅ (`--llm-whole` forces vision for all fields; default fills only rule blanks when a key is configured; `--no-llm` rules-only), `render` ✅, `eval` ✅, `serve/scaffold/editor/proof` ✅. Remaining: `generate`, `verify`, `batch`.
 - [x] **2.2** `src/convert/convert.mjs`: **fallback chain** — Inkscape (timeout 120s) → pdftocairo on crash/timeout/non-zero exit; `--converter auto|inkscape|pdftocairo` (default `auto`). `ladder convert in.pdf -o out.svg` wired; scaffold now uses the same chain (outline-cleanup only runs on the Inkscape path, which has the text layer). CI runs `npm test` before deploy. *(Built.)*
 - [x] **2.3** **Superseded by `ladder serve`.** The generated editor loads a template, shows the source PDF (view-only), edits params live (with formulas), supports click-to-bind, and exports SVG. Browser-side extraction of a *new* PDF still needs the server (conversion is native). *(Built.)*
 - [ ] **2.4** Add **Download converted SVG** in the HTML (via the CLI/convert path, or best-effort in-browser).

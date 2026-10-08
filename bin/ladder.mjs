@@ -16,7 +16,8 @@ const usage = () => {
   node bin/ladder.mjs proof    <templateDir>
   node bin/ladder.mjs render   <templateId> [params.json] [-o out.svg]
   node bin/ladder.mjs convert  <file.pdf> -o out.svg [--converter auto|inkscape|pdftocairo]
-  node bin/ladder.mjs extract  <file.pdf> [-o params.json] [--llm-whole|--no-llm]`);
+  node bin/ladder.mjs extract  <file.pdf> [-o params.json] [--llm-whole|--no-llm]
+  node bin/ladder.mjs eval     [file.pdf ...] [--with-text] [--json]`);
 };
 
 try {
@@ -96,6 +97,29 @@ try {
       const filled = Object.values(r.confidence).filter((c) => c.source?.startsWith('vision')).length;
       const rules = Object.values(r.confidence).filter((c) => c.source === 'rules').length;
       console.error(`extracted ${r.file}: module=${r.module} profile=${r.profile} fields ${rules} rules + ${filled} vision-filled, ${r.warnings.length} warning(s)`);
+      break;
+    }
+    case 'eval': {
+      const args = process.argv.slice(3);
+      const asJson = args.includes('--json');
+      const withText = args.includes('--with-text');
+      const files = args.filter((a) => !a.startsWith('--'));
+      const { scoreFiles, resolveCorpus } = await import('../src/eval/scoreboard.mjs');
+      const list = files.length ? files.map((f) => resolve(f)) : resolveCorpus(resolve('.'));
+      if (!list.length) throw new Error('no PDFs found (pass files or run from the repo root)');
+      const r = await scoreFiles(list, { text: withText, vision: true });
+      if (asJson) console.log(JSON.stringify(r, null, 2));
+      else {
+        console.log(`llm: ${r.key ?? 'NO KEY — rules-only'}`);
+        for (const [method, [hit, n]] of Object.entries(r.totals)) {
+          console.log(`  ${method.padEnd(8)} ${hit}/${n} (${Math.round((hit / n) * 100)}%)`);
+        }
+        for (const res of r.results) {
+          const misses = res.rows.filter((x) => x.cells.merged !== 'hit');
+          console.log(`${res.file} [${res.module}]: ${res.rows.length - misses.length}/${res.rows.length} merged`
+            + (misses.length ? ` — missed: ${misses.map((x) => x.field).join(', ')}` : ''));
+        }
+      }
       break;
     }
     default:
