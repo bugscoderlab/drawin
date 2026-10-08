@@ -154,6 +154,7 @@
 
   const pc=document.getElementById('params');
   for(const p of tpl.params){ const l=document.createElement('label'); l.textContent=p.label||p.id;
+    if(p.unverified){ const b=document.createElement('span'); b.className='badge'; b.style.cssText='background:#fdf3e3;color:#8a5a00'; b.textContent='unverified'; l.append(' ',b); }
     const i=document.createElement('input'); i.type='text'; i.value=p.default??''; i.dataset.id=p.id;
     if(p.formula){ i.readOnly=true; i.title='computed: '+p.formula; derived[p.id]=i; }
     i.addEventListener('input',renderNow); paramEls[p.id]=i; pc.appendChild(l); pc.appendChild(i); }

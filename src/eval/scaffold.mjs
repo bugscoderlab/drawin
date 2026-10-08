@@ -7,10 +7,11 @@
 // Conversion is native (Inkscape/poppler), which is why this lives in the CLI.
 
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, join, basename } from 'node:path';
 import { textRuns, findRun, orderedLists } from '../templates/render.mjs';
-import { parseQueryAll, coincidentOutlineIds, hideIds } from '../templates/authoring.mjs';
+import { parseQueryAll, coincidentOutlineIds, hideIds, svgIds } from '../templates/authoring.mjs';
 import { buildEditor } from './makeEditor.mjs';
 import { convertPdf } from '../convert/convert.mjs';
 
@@ -19,6 +20,8 @@ const INK = existsSync(join(process.env.HOME || '', '.local/bin/inkscape'))
   : 'inkscape';   // container/VPS: resolve via PATH (still needed for --query-all)
 const norm = (s) => String(s).replace(/\s+/g, '');
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+/** Dimension params are positional: dim1…dim8. */
+const isDim = (id) => /^dim\d+$/.test(id);
 
 function locate(runs, value) {
   const t = norm(value);
@@ -132,7 +135,7 @@ function propose(runs, pageH) {
  */
 export function proposeGeometry(rows, props, svg = '') {
   const num = (v) => { const n = parseFloat(String(v).replace(/,/g, '')); return Number.isNaN(n) ? null : n; };
-  const cleanIds = svg ? new Set([...svg.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1])) : null;
+  const cleanIds = svg ? svgIds(svg) : null;
   const usable = rows.filter((r) => r.w > 0 && r.h > 0 && (!cleanIds || cleanIds.has(r.id)));
   const small = usable.filter((r) => Math.max(r.w, r.h) <= 14 && Math.min(r.w, r.h) > 0);
   const endsOf = (r, vertical) => vertical
@@ -229,6 +232,50 @@ function makeSample(props) {
   return s;
 }
 
+/**
+ * Vision dimension recovery step (issue #4): the vision model proposes each
+ * dim's {value, position}; the located outline glyph cluster is replaced by a
+ * real <text> node so the regular proposal path binds it like any other dim.
+ * The plausibility gate (proposeGeometry's [0.005, 2] px/mm check, which also
+ * drops dims lacking an arrowed dimension line) runs BEFORE anything is
+ * emitted: a rejected dim loses its param AND its synthesized text, and the
+ * rejection is counted in `vision` (reported by the caller, never silent).
+ * The raw reply is cached in vision.json beside the template, keyed by a
+ * content hash of the source PDF (issue #5) — a second scaffold of the same
+ * source replays the cache instead of paying for another vision call.
+ * Mutates props/vision; returns the (possibly rewritten) clean SVG.
+ */
+async function recoverAndBindVisionDims({ file, dir, rows, clean, pageH, props, vision, llm }) {
+  const { recoverVisionDims } = await import('./vision.mjs');
+  const pageW = Number((clean.match(/<svg[^>]*\bwidth="([\d.]+)"/) || [])[1]) || 0;
+  const rec = await recoverVisionDims({
+    file, rows, svg: clean, pageW, pageH,
+    ...(typeof llm === 'function' ? { call: llm } : {}),
+    cache: {
+      path: join(dir, 'vision.json'),
+      hash: createHash('sha256').update(readFileSync(file)).digest('hex'),
+    },
+  });
+  if (!rec) return clean;
+  vision.called = true;
+  clean = rec.svg;
+  // The synthesized <text> nodes flow through the regular proposal path —
+  // no special-casing downstream.
+  const found = propose(textRuns(clean), pageH).filter((p) => isDim(p.id));
+  const check = proposeGeometry(rows, found, clean);
+  const ok = new Set(check.lines);
+  const kept = found.filter((p) => ok.has(p.id));
+  const dropped = found.filter((p) => !ok.has(p.id));
+  if (dropped.length) {
+    clean = hideIds(clean, dropped.flatMap((p) => p.geom.glyphs.map((g) => g.id).filter(Boolean)));
+  }
+  writeFileSync(join(dir, 'base.clean.svg'), clean);
+  for (const p of kept) { p.unverified = true; props.push(p); }
+  vision.dims = kept.length;
+  vision.rejected = dropped.length;
+  return clean;
+}
+
 export async function scaffold(pdf, opts = {}) {
   const file = resolve(pdf);
   if (!existsSync(file)) throw new Error(`no such file: ${file}`);
@@ -256,14 +303,41 @@ export async function scaffold(pdf, opts = {}) {
   const runs = textRuns(clean);
   const pageH = Number((clean.match(/<svg[^>]*\bheight="([\d.]+)"/) || [])[1]) || Math.max(...runs.map((r) => r.y), 1);
   const props = propose(runs, pageH);
+  // Preserve-by-default re-scaffold (issue #3): if this template already exists,
+  // carry the human-tuned parts over — per-param formula/label, hand-made id-bindings
+  // (POST /bind) whose ids still exist in the fresh base art, and the params they
+  // reference. What is deterministic (outline hiding, value and geometry bindings)
+  // is always recomputed from the current art. opts.force restores the wipe.
+
+  // Vision dimension recovery (docs/plans/vision-dimension-recovery.md):
+  // when the text layer yielded zero dimension params (outline-only
+  // annotations, known case: LSB-2609-007-FHL-R00.pdf), a vision model
+  // proposes each dim's value + position; the located outline glyph cluster
+  // is replaced by a real <text> node so the machinery below binds it like
+  // any other dim. Rejections (px/mm implausible OR no arrowed dimension
+  // line) are reported, never silent. Trigger is zero-dims only (v1);
+  // opts.llm === false disables the call, opts.llm may inject a fake
+  // (tests), and with no key the pass is a no-op (today's behavior).
+  const vision = { called: false, dims: 0, rejected: 0 };
+  // The gate also requires the Inkscape path: pdftocairo outlines EVERYTHING
+  // (title block included), so a pdftocairo conversion has no <text> runs at
+  // all — outline synthesis would produce nothing bindable. A zero-dims PDF
+  // converted via pdftocairo therefore gets no vision pass (v1, defensible).
+  if (conv.converter === 'inkscape' && rows.length && !props.some((p) => isDim(p.id)) && opts.llm !== false) {
+    clean = await recoverAndBindVisionDims({ file, dir, rows, clean, pageH, props, vision, llm: opts.llm });
+  }
   // Preserve hand-edits across re-scaffolds: if this template already exists, carry
   // the manual per-param fields (formula, label) over to the newly proposed params.
   const prevPath = join(dir, 'template.json');
-  let prevById = {};
-  if (existsSync(prevPath)) {
+  let prevById = {}, prevIdBindings = [];
+  if (!opts.force && existsSync(prevPath)) {
     try {
       const prev = JSON.parse(readFileSync(prevPath, 'utf8'));
       prevById = Object.fromEntries((prev.params || []).map((p) => [p.id, p]));
+      const artIds = svgIds(clean);
+      prevIdBindings = (prev.bindings || []).filter(
+        (b) => Array.isArray(b.ids) && b.ids.length && !b.geom && b.ids.every((id) => artIds.has(id))
+      );
       for (const p of props) {
         // match id AND value: dim ids are positional, so the same id can be a
         // different dimension when a re-scaffold finds new dims
@@ -297,8 +371,11 @@ export async function scaffold(pdf, opts = {}) {
     for (const [cid, val] of Object.entries(proposed.constants)) {
       if (!props.some((p) => p.id === cid)) props.push({ id: cid, label: `Constant (${cid})`, value: String(val), isConst: true });
     }
-    // Constants referenced by carried-over (preserved) formulas must survive
-    // a re-scaffold even when the LLM doesn't re-propose them.
+  }
+  // Constants referenced by carried-over (preserved) formulas must survive a
+  // re-scaffold even when the LLM is skipped or doesn't re-propose them.
+  // Runs on every scaffold; with no prior template (or --force) prevById is empty.
+  {
     const refIds = (expr) => (expr.match(/(?<![.\d])\b[a-zA-Z_]\w*\b/g) || []);
     for (const p of props) {
       if (!p.formula) continue;
@@ -309,14 +386,26 @@ export async function scaffold(pdf, opts = {}) {
       }
     }
   }
+  // A preserved id-binding whose param the fresh scaffold didn't propose (a
+  // hand-added /bind param) carries its param over, or the binding would dangle.
+  const idBoundParams = [];
+  for (const b of prevIdBindings) {
+    if (props.some((p) => p.id === b.param)) continue;
+    const old = prevById[b.param];
+    if (old) idBoundParams.push({ id: old.id, label: old.label, value: String(old.default), isConst: !!old.const, idBound: true });
+  }
+  props.push(...idBoundParams);
+  // a preserved hand-made id-binding re-anchors its param by id — it replaces
+  // the fresh value binding for that param instead of double-binding it
+  const idBound = new Set(prevIdBindings.map((b) => b.param));
   const tpl = {
     id,
     name: props.find((p) => p.id === 'productName')?.value || basename(file),
     source: opts.sourceName || basename(file),
     match: {},
     base: { svg: 'base.clean.svg' },
-    params: props.map((p) => ({ id: p.id, label: p.label, type: 'text', default: p.value, ...(p.formula ? { formula: p.formula } : {}), ...(p.isConst ? { const: true } : {}) })),
-    bindings: props.filter((p) => !p.isConst).map((p) => ({ value: p.value, param: p.id, mode: p.mode })),
+    params: props.map((p) => ({ id: p.id, label: p.label, type: 'text', default: p.value, ...(p.formula ? { formula: p.formula } : {}), ...(p.isConst ? { const: true } : {}), ...(p.unverified ? { unverified: true } : {}) })),
+    bindings: props.filter((p) => !p.isConst && !p.idBound && !idBound.has(p.id)).map((p) => ({ value: p.value, param: p.id, mode: p.mode })),
     sample: makeSample(props),
   };
   // L2 geometry: dim lines (with their arrowheads and text centres) track the value.
@@ -326,25 +415,36 @@ export async function scaffold(pdf, opts = {}) {
     tpl.bindings.push(...g.bindings);
     geomLines = g.lines.length;
   }
+  // hand-made id-bindings carried over from the prior template (issue #3)
+  tpl.bindings.push(...prevIdBindings);
   writeFileSync(join(dir, 'template.json'), JSON.stringify(tpl, null, 2) + '\n');
 
   // 4. editor
   const ed = buildEditor(dir, { previewDir: opts.previewDir || join(resolve(opts.templatesDir || 'templates'), '..', 'preview') });
 
-  return { id, dir, outlines, props, llmFormulas, geomLines, editor: ed.out, editorMB: (ed.bytes / 1e6).toFixed(1) };
+  return { id, dir, outlines, props, llmFormulas, geomLines, preserved: prevIdBindings.length, vision, editor: ed.out, editorMB: (ed.bytes / 1e6).toFixed(1) };
+}
+
+/** Human-readable scaffold summary — the single reporting path for both
+ *  `node src/eval/scaffold.mjs` and the documented `ladder scaffold` command,
+ *  so a vision rejection can never be silent through one of them. */
+export function reportScaffold(r, log = console.log) {
+  log(`scaffolded: ${r.id}`);
+  log(`  folder    : ${r.dir}`);
+  log(`  outlines  : ${r.outlines} duplicate(s) hidden`);
+  log(`  proposed  : ${r.props.length} binding(s)`);
+  for (const p of r.props) log(`     ${p.id.padEnd(12)} ${p.mode.padEnd(6)} ${JSON.stringify(p.value)}`);
+  if (r.geomLines) log(`  geometry  : ${r.geomLines} dimension line(s) track their value`);
+  if (r.preserved) log(`  preserved : ${r.preserved} hand-made id-binding(s) kept`);
+  if (r.vision.called) log(`  vision    : ${r.vision.dims} dim(s) recovered, ${r.vision.rejected} rejected by the plausibility check`);
+  log(`  editor    : ${r.editor}  (${r.editorMB} MB)`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]).endsWith('scaffold.mjs')) {
   const pdf = process.argv[2];
-  if (!pdf) { console.error('usage: node src/eval/scaffold.mjs <file.pdf>'); process.exit(1); }
+  if (!pdf || pdf.startsWith('--')) { console.error('usage: node src/eval/scaffold.mjs <file.pdf> [--force]'); process.exit(1); }
   try {
-    const r = await scaffold(pdf);
-    console.log(`scaffolded: ${r.id}`);
-    console.log(`  folder    : ${r.dir}`);
-    console.log(`  outlines  : ${r.outlines} duplicate(s) hidden`);
-    console.log(`  proposed  : ${r.props.length} binding(s)`);
-    for (const p of r.props) console.log(`     ${p.id.padEnd(12)} ${p.mode.padEnd(6)} ${JSON.stringify(p.value)}`);
-    if (r.geomLines) console.log(`  geometry  : ${r.geomLines} dimension line(s) track their value`);
-    console.log(`  editor    : ${r.editor}  (${r.editorMB} MB)`);
+    const r = await scaffold(pdf, { force: process.argv.includes('--force') });
+    reportScaffold(r);
   } catch (e) { console.error('ERROR: ' + e.message); process.exit(1); }
 }

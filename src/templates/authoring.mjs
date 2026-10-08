@@ -13,6 +13,13 @@ export function parseQueryAll(text) {
   return rows;
 }
 
+/** Ids present in an SVG document (`id="..."` attributes) — the one place the
+ *  id-extraction regex lives; scaffold and serve both validate bindings
+ *  against this. */
+export function svgIds(svg) {
+  return new Set([...String(svg).matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
+}
+
 /** Ids of <path> elements whose bbox coincides with a <text> element (>= tol). */
 export function coincidentOutlineIds(rows, tol = 0.6) {
   const texts = rows.filter((r) => r.id.startsWith('text') && r.w > 0 && r.h > 0);

@@ -1,6 +1,6 @@
 # Vision dimension recovery — design (agreed 2026-10-08)
 
-Status: **designed, not implemented** (owner: implement later; do not start from this note alone — re-read `src/eval/scaffold.mjs` first).
+Status: **implemented** (`src/eval/vision.mjs` + the zero-dims trigger in `src/eval/scaffold.mjs`; tests in `test/vision.test.js`).
 
 ## Problem
 
@@ -12,7 +12,7 @@ Geometry-only binding (stretch the line, leave the outlined number) would make "
 
 ## Pipeline
 
-1. **Trigger** — only when the text layer yields **zero** numeric dimension params (v1; partial-coverage detection is explicitly out of scope).
+1. **Trigger** — only when the text layer yields **zero** numeric dimension params (v1; partial-coverage detection is explicitly out of scope), and only on the Inkscape conversion path: pdftocairo outlines everything (title block included), leaving no `<text>` runs to anchor synthesis, so a zero-dims pdftocairo conversion gets no vision pass (v1, defensible).
 2. **Vision call** — `pagePng` + `callLLM` (both existing, importable from scaffold; the formulas-proposal pass already establishes the pattern, incl. injectable fake for tests). Prompt extended to return, per dimension: `{value, x_pct, y_pct}` — normalized coordinates on the page image.
 3. **Coordinate conversion** — percentages → SVG user units via the page size from `parseQueryAll`/SVG dims. (Vision sees PNG pixels at 150–300 dpi; rows are in user units — normalize before matching.)
 4. **Locate cluster** — find the outline glyph cluster nearest the converted position (tiny adjacent paths, per the outline rows from `--query-all`).
@@ -22,7 +22,7 @@ Geometry-only binding (stretch the line, leave the outlined number) would make "
 ## Hallucination policy
 
 - Gate: `proposeGeometry`'s self-calibration already rejects bindings whose px/mm lands outside `[0.005, 2]` — a wrong vision value almost always fails it.
-- Rejections are **reported** in scaffold output (`vision: proposed N dims, M rejected by scale check`), never dropped silently.
+- Rejections are **reported** in scaffold output (`vision: N dim(s) recovered, M rejected by the plausibility check`), never dropped silently.
 - Rules cross-check: if rules extracted a text value that conflicts with a vision value for the same position, prefer rules and flag.
 
 ## Cost & caching

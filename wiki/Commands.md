@@ -28,10 +28,16 @@ node bin/ladder.mjs render trolley-slt p.json -o out.svg
 ## ladder scaffold
 
 ```bash
-node bin/ladder.mjs scaffold "file.pdf"
+node bin/ladder.mjs scaffold "file.pdf" [--force]
 ```
 
 Convert → hide outline duplicates → auto-propose bindings (title block + dimensions) → write `templates/<id>/` → build the editor HTML in `preview/`.
+
+Re-scaffold is **preserve-by-default**: an existing `templates/<id>/` is merged —
+per-param formulas, labels, named constant params, and hand-made id-bindings
+(`POST /bind`) whose ids still exist in the base art are kept; outline hiding,
+value bindings, and geometry bindings are recomputed from the current art.
+`--force` restores the from-scratch wipe.
 
 ## ladder serve
 
@@ -40,6 +46,7 @@ node bin/ladder.mjs serve [port]    # default 8123
 ```
 
 Upload page → scaffold → live editor bridge. Conversion is native, which is why this needs the server (or the Docker container).
+Set `DRAWIN_ROOT=/path/to/root` to pin the server's templates/preview dirs somewhere other than its own install location (test seam for the HTTP tests).
 
 ## ladder proof / ladder editor
 

@@ -3,8 +3,11 @@
 // writes preview/<id>-editor.html (base art + params + binding engine inlined).
 
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
-import { resolve, join } from 'node:path';
+import { resolve, join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+
+// The shell ships with the code — resolve it from this module, not the process cwd.
+const SHELL = join(dirname(fileURLToPath(import.meta.url)), '..', 'templates', 'editor.template.html');
 
 export function buildEditor(tplDir = 'templates/trolley-slt', { previewDir } = {}) {
   const dir = resolve(tplDir);
@@ -13,7 +16,7 @@ export function buildEditor(tplDir = 'templates/trolley-slt', { previewDir } = {
   if (!existsSync(svgPath)) throw new Error(`missing ${svgPath} — run the scaffold/proof first to produce the cleaned base`);
   const svg = readFileSync(svgPath, 'utf8');
 
-  const shell = readFileSync(resolve('src/templates/editor.template.html'), 'utf8');
+  const shell = readFileSync(SHELL, 'utf8');
   const html = shell
     .replace('__ID__', tpl.id)
     .replace('__TEMPLATE_JSON__', () => JSON.stringify(tpl))

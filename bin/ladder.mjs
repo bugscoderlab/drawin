@@ -11,7 +11,7 @@ const [cmd, arg] = process.argv.slice(2);
 const usage = () => {
   console.log(`usage:
   node bin/ladder.mjs serve [port]
-  node bin/ladder.mjs scaffold <file.pdf>
+  node bin/ladder.mjs scaffold <file.pdf> [--force]
   node bin/ladder.mjs editor   <templateDir>
   node bin/ladder.mjs proof    <templateDir>
   node bin/ladder.mjs render   <templateId> [params.json] [-o out.svg]
@@ -32,15 +32,9 @@ try {
     }
     case 'scaffold': {
       if (!arg) { usage(); process.exit(1); }
-      const { scaffold } = await import('../src/eval/scaffold.mjs');
-      const r = await scaffold(arg);
-      console.log(`scaffolded: ${r.id}`);
-      console.log(`  folder   : ${r.dir}`);
-      console.log(`  outlines : ${r.outlines} duplicate(s) hidden`);
-      console.log(`  proposed : ${r.props.length} binding(s)`);
-      for (const p of r.props) console.log(`     ${p.id.padEnd(12)} ${p.mode.padEnd(6)} ${JSON.stringify(p.value)}`);
-      if (r.geomLines) console.log(`  geometry  : ${r.geomLines} dimension line(s) track their value`);
-      console.log(`  editor   : ${r.editor}  (${r.editorMB} MB)`);
+      const { scaffold, reportScaffold } = await import('../src/eval/scaffold.mjs');
+      const r = await scaffold(arg, { force: process.argv.slice(3).includes('--force') });
+      reportScaffold(r);
       break;
     }
     case 'editor': {
@@ -84,9 +78,15 @@ try {
       const conv = cIdx >= 0 ? args[cIdx + 1] : 'auto';
       const [pdf] = args.filter((a, i) => a !== '-o' && args[i - 1] !== '-o' && a !== '--converter' && args[i - 1] !== '--converter');
       if (!pdf || !out) { usage(); process.exit(1); }
-      const { convertPdf } = await import('../src/convert/convert.mjs');
-      const r = convertPdf(resolve(pdf), resolve(out), { converter: conv });
-      console.error(`converted with ${r.converter}${r.repaired ? ' (repaired)' : ''} -> ${out}`);
+      const { convertPdf, formatHops } = await import('../src/convert/convert.mjs');
+      try {
+        const r = convertPdf(resolve(pdf), resolve(out), { converter: conv });
+        console.error(formatHops(r.hops));
+        console.error(`converted with ${r.converter}${r.repaired ? ' (repaired)' : ''} -> ${out}`);
+      } catch (e) {
+        if (e.hops) console.error(formatHops(e.hops)); // fallback is never silent
+        throw e;
+      }
       break;
     }
     case 'extract': {
