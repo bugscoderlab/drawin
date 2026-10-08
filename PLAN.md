@@ -39,7 +39,7 @@ Runs **headless (CLI, for scale)** and **in-browser (the HTML, for interactive u
 - **Template registry (1C.1/1C.5, done 2026-10-08)** — `src/templates/registry.mjs`: loads `templates/*/template.json` (bad entries skipped, never fatal) + L3 code-model seeds; signal scoring (keywords/pattern/dimensions) with a threshold that a drawing-no pattern alone cannot pass; ties prefer real art over code models. `test/registry.test.js` (7 tests) locks the corpus mappings: 003 → `trolley-slt`, 004 → `cage-fhl`, 009 → `cat-l3`, unknown → `null`.
 - **`ladder render` + Template mode (1C.6, done 2026-10-08)** — `src/templates/renderCmd.mjs` renders any registry entry (L1 real art with binding report, L3 code models through the core); the generator HTML has a Template mode fed by `templates/index.js` (metadata manifest from `scripts/build-manifest.mjs`; base art fetched per template over http, CLI pointed to on `file://`). `test/render-cmd.test.js` locks sample re-renders, defaults, L3 overrides, and manifest↔registry sync.
 
-**Not built:** P1 pdf.js extractor, L2 geometry, `ladder batch`, MCP tools, the `009` conversion fix.
+**Not built:** P1 pdf.js extractor, L2 geometry, `ladder batch`, MCP tools, the `009` conversion fix, `extract`/`generate`/`verify` CLI subcommands.
 
 ---
 
@@ -371,7 +371,7 @@ Every pass sees the **whole page** (no cropping).
   - `ladder generate params.json -o drawing.svg`
   - `ladder verify in.pdf` — compare extracted vs generated dimensions
   - `ladder eval` — A/B scoreboard
-- [ ] **2.2** `src/convert/convert.js`: **fallback chain** — Inkscape (timeout) → pdftocairo. Note pdftocairo outlines text; Inkscape keeps it.
+- [x] **2.2** `src/convert/convert.mjs`: **fallback chain** — Inkscape (timeout 120s) → pdftocairo on crash/timeout/non-zero exit; `--converter auto|inkscape|pdftocairo` (default `auto`). `ladder convert in.pdf -o out.svg` wired; scaffold now uses the same chain (outline-cleanup only runs on the Inkscape path, which has the text layer). CI runs `npm test` before deploy. *(Built.)*
 - [x] **2.3** **Superseded by `ladder serve`.** The generated editor loads a template, shows the source PDF (view-only), edits params live (with formulas), supports click-to-bind, and exports SVG. Browser-side extraction of a *new* PDF still needs the server (conversion is native). *(Built.)*
 - [ ] **2.4** Add **Download converted SVG** in the HTML (via the CLI/convert path, or best-effort in-browser).
 - [ ] **2.5** MCP: add `import_ladder_pdf` alongside `configure_ladder_drawing`, returning extracted params + confidence.

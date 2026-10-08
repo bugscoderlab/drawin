@@ -18,6 +18,8 @@ jobs:
           set -e
           git ls-files '*.mjs' 'bin/*.mjs' | while read -r f; do node --check "$f"; done
           node -e "import('./src/serve.mjs').then(()=>console.log('serve module loads OK'))"
+      - name: Tests (zero deps; converter tests skip when tools absent)
+        run: npm test
 
   deploy:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'

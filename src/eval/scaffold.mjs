@@ -12,10 +12,11 @@ import { resolve, join, basename } from 'node:path';
 import { textRuns, findRun, orderedLists } from '../templates/render.mjs';
 import { parseQueryAll, coincidentOutlineIds, hideIds } from '../templates/authoring.mjs';
 import { buildEditor } from './makeEditor.mjs';
+import { convertPdf } from '../convert/convert.mjs';
 
 const INK = existsSync(join(process.env.HOME || '', '.local/bin/inkscape'))
   ? join(process.env.HOME, '.local/bin/inkscape')
-  : 'inkscape';   // container/VPS: resolve via PATH
+  : 'inkscape';   // container/VPS: resolve via PATH (still needed for --query-all)
 const norm = (s) => String(s).replace(/\s+/g, '');
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
@@ -93,24 +94,22 @@ export function scaffold(pdf, opts = {}) {
   const dir = resolve('templates', id);
   mkdirSync(dir, { recursive: true });
 
-  // 1. convert (Inkscape keeps text; needed for binding)
+  // 1. convert (fallback chain: Inkscape keeps text — needed for binding)
   const raw = join(dir, 'base.svg');
-  try {
-    execFileSync(INK, ['--export-type=svg', `--export-filename=${raw}`, file], { stdio: 'pipe' });
-  } catch (e) {
-    const sig = e.signal ? ` (signal ${e.signal})` : '';
-    const why = e.code === 'ENOENT' ? 'inkscape not found on PATH'
-      : String(e.stderr || e.message || '').trim().split('\n').slice(-2).join(' ').slice(0, 200);
-    throw new Error(`conversion failed${sig} — ${why}`);
-  }
-  if (!existsSync(raw)) throw new Error('conversion produced no SVG');
-
-  // 2. hide coincident outline duplicates
+  const conv = convertPdf(file, raw, { converter: opts.converter || 'auto' });
   const base = readFileSync(raw, 'utf8');
-  const rows = parseQueryAll(execFileSync(INK, ['--query-all', raw], { encoding: 'utf8', maxBuffer: 1 << 28 }));
-  const dup = coincidentOutlineIds(rows);
-  const clean = hideIds(base, dup);
-  writeFileSync(join(dir, 'base.clean.svg'), clean);
+
+  // 2. hide coincident outline duplicates (Inkscape backend only — it has the text
+  //    layer that makes runs findable; pdftocairo output has no <text> to bind)
+  let outlines = 0;
+  if (conv.converter === 'inkscape') {
+    const rows = parseQueryAll(execFileSync(INK, ['--query-all', raw], { encoding: 'utf8', maxBuffer: 1 << 28 }));
+    const dup = coincidentOutlineIds(rows);
+    outlines = dup.length;
+    writeFileSync(join(dir, 'base.clean.svg'), hideIds(base, dup));
+  } else {
+    writeFileSync(join(dir, 'base.clean.svg'), base);
+  }
 
   // 3. propose bindings
   const runs = textRuns(clean);
@@ -131,7 +130,7 @@ export function scaffold(pdf, opts = {}) {
   // 4. editor
   const ed = buildEditor(dir);
 
-  return { id, dir, outlines: dup.length, props, editor: ed.out, editorMB: (ed.bytes / 1e6).toFixed(1) };
+  return { id, dir, outlines, props, editor: ed.out, editorMB: (ed.bytes / 1e6).toFixed(1) };
 }
 
 if (process.argv[1] && resolve(process.argv[1]).endsWith('scaffold.mjs')) {

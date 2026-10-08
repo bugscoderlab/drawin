@@ -14,7 +14,8 @@ const usage = () => {
   node bin/ladder.mjs scaffold <file.pdf>
   node bin/ladder.mjs editor   <templateDir>
   node bin/ladder.mjs proof    <templateDir>
-  node bin/ladder.mjs render   <templateId> [params.json] [-o out.svg]`);
+  node bin/ladder.mjs render   <templateId> [params.json] [-o out.svg]
+  node bin/ladder.mjs convert  <file.pdf> -o out.svg [--converter auto|inkscape|pdftocairo]`);
 };
 
 try {
@@ -65,6 +66,19 @@ try {
       else console.log(r.svg);
       console.error(`rendered ${id}: ${r.report.length - misses.length}/${r.report.length} bindings ok`
         + (misses.length ? ` — MISSED: ${misses.map((m) => `${m.param} (${m.reason})`).join(', ')}` : ''));
+      break;
+    }
+    case 'convert': {
+      const args = process.argv.slice(3);
+      const oIdx = args.indexOf('-o');
+      const cIdx = args.indexOf('--converter');
+      const out = oIdx >= 0 ? args[oIdx + 1] : null;
+      const conv = cIdx >= 0 ? args[cIdx + 1] : 'auto';
+      const [pdf] = args.filter((a, i) => a !== '-o' && args[i - 1] !== '-o' && a !== '--converter' && args[i - 1] !== '--converter');
+      if (!pdf || !out) { usage(); process.exit(1); }
+      const { convertPdf } = await import('../src/convert/convert.mjs');
+      const r = convertPdf(resolve(pdf), resolve(out), { converter: conv });
+      console.error(`converted with ${r.converter} -> ${out}`);
       break;
     }
     default:
