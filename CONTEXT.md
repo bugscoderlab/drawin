@@ -29,11 +29,11 @@ A dimension annotation recognised structurally: a thin straight span with arrowh
 A PDF rewrite inserted between Inkscape attempts in the convert chain when Inkscape crashes on the original. Two rewriters, in order: Ghostscript `pdfwrite`, then `pdftocairo -pdf`. Last resort is pdftocairo directly to SVG (outlines the text).
 _Avoid_: Fallback, fix-up
 
-**Outline synthesis** (planned):
-Replacing vector-outline dimension text (a cluster of glyph paths, no `<text>` node) with a real `<text>` element, positioned/sized from the outline cluster's bbox, so text and geometry bindings work on drawings whose annotations were never real text.
+**Outline synthesis**:
+Replacing vector-outline dimension text (a cluster of glyph paths, no `<text>` node) with a real `<text>` element, positioned/sized from the outline cluster's bbox, so text and geometry bindings work on drawings whose annotations were never real text. (Implemented in `src/eval/vision.mjs`, driven by the zero-dims trigger in scaffold.)
 
-**Unverified param** (planned):
-A param whose value came from a vision pass rather than the PDF text layer; badged in the editor and cross-checked against rules output when a conflict exists.
+**Unverified param**:
+A param whose value came from a vision pass rather than the PDF text layer; badged in the editor and cross-checked against rules output when a conflict exists. Flows into template.json as `unverified: true`; values that fail the px/mm plausibility gate are dropped and reported in the scaffold output.
 
 **Preserve-by-default** (planned):
 Re-scaffold semantics: an existing template dir is merged (formulas, labels, named constants, and hand-made id-bindings whose ids still exist are kept; outlines and geometry are recomputed). Wiping requires an explicit `--force`.
