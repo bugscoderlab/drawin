@@ -10,8 +10,9 @@
 
 import http from 'node:http';
 import { readFileSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
-import { resolve, join, basename } from 'node:path';
+import { resolve, join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { scaffold } from './eval/scaffold.mjs';
 import { buildEditor } from './eval/makeEditor.mjs';
 
@@ -110,15 +111,28 @@ const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(
 const UPLOAD_TOKEN = process.env.UPLOAD_TOKEN || '';
 const tokenOk = (req) => !UPLOAD_TOKEN || req.headers['x-upload-token'] === UPLOAD_TOKEN;
 
+// Everything the server reads or writes is pinned to the server's own installed
+// location (this file's src/), never to the process cwd — `serve` started from
+// any directory must scaffold into this repo's templates/. DRAWIN_ROOT exists so
+// the HTTP tests can point a spawned server at temp dirs.
+const ROOT = process.env.DRAWIN_ROOT
+  ? resolve(process.env.DRAWIN_ROOT)
+  : resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const TEMPLATES = join(ROOT, 'templates');
+const PREVIEW = join(ROOT, 'preview');
+
+// Localhost by default; HOST (e.g. 0.0.0.0) is the explicit choice for LAN exposure.
+const HOST = process.env.HOST || '127.0.0.1';
+
 function listTemplates() {
-  const dir = resolve('templates');
+  const dir = TEMPLATES;
   if (!existsSync(dir)) return [];
   const out = [];
   for (const id of readdirSync(dir)) {
     const tp = join(dir, id, 'template.json');
     if (!existsSync(tp)) continue;
     const t = JSON.parse(readFileSync(tp, 'utf8'));
-    out.push({ id, name: t.name || id, editor: existsSync(join(resolve('preview'), `${id}-editor.html`)) });
+    out.push({ id, name: t.name || id, editor: existsSync(join(PREVIEW, `${id}-editor.html`)) });
   }
   return out;
 }
@@ -143,7 +157,7 @@ export function serve(port = 8123) {
         const id = slug(name.replace(/\.pdf$/i, '')) || `upload-${Date.now()}`;
         const tmp = join(tmpdir(), `ladder-upload-${Date.now()}-${name}`);
         writeFileSync(tmp, buf);
-        const r = await scaffold(tmp, { id, sourceName: name });
+        const r = await scaffold(tmp, { id, sourceName: name, templatesDir: TEMPLATES, previewDir: PREVIEW });
         return send(res, 200, 'application/json', JSON.stringify({
           ok: true, id: r.id,
           name: r.props.find((p) => p.id === 'productName')?.value || r.id,
@@ -156,29 +170,38 @@ export function serve(port = 8123) {
         if (!tokenOk(req)) return send(res, 401, 'application/json', JSON.stringify({ ok: false, error: 'unauthorized (x-upload-token)' }));
         const body = JSON.parse((await readBody(req)).toString() || '{}');
         const id = slug(body.id || '');
-        const tp = resolve('templates', id, 'template.json');
+        const tp = join(TEMPLATES, id, 'template.json');
         if (!existsSync(tp)) return send(res, 404, 'application/json', JSON.stringify({ ok: false, error: 'unknown template' }));
         const t = JSON.parse(readFileSync(tp, 'utf8'));
+        // An id binding must anchor to nodes that exist in the template's base
+        // art — reject unknown ids instead of writing them into template.json.
+        if (body.ids && body.ids.length) {
+          const svgFile = join(TEMPLATES, id, t.base?.svg || 'base.clean.svg');
+          if (!existsSync(svgFile)) return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: 'no base art to validate against' }));
+          const known = new Set([...readFileSync(svgFile, 'utf8').matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
+          const missing = body.ids.filter((x) => !known.has(String(x)));
+          if (missing.length) return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: `id(s) not in base art: ${missing.join(', ')}` }));
+        }
         if (!t.params.some((p) => p.id === body.param)) t.params.push({ id: body.param, label: body.label || body.param, type: 'text', default: body.value });
         const binding = body.ids && body.ids.length
           ? { ids: body.ids, param: body.param, mode: 'id' }
           : { value: body.value, param: body.param, mode: body.mode || 'text' };
         if (!t.bindings.some((b) => b.param === body.param)) t.bindings.push(binding);
         writeFileSync(tp, JSON.stringify(t, null, 2) + '\n');
-        buildEditor(resolve('templates', id));
+        buildEditor(join(TEMPLATES, id), { previewDir: PREVIEW });
         return send(res, 200, 'application/json', JSON.stringify({ ok: true, id, param: body.param, value: body.value, mode: body.mode }));
       }
 
       if (req.method === 'GET' && url.pathname.startsWith('/editor/')) {
         const id = slug(url.pathname.split('/')[2] || '');
-        const f = resolve('preview', `${id}-editor.html`);
+        const f = join(PREVIEW, `${id}-editor.html`);
         if (!existsSync(f)) return send(res, 404, 'text/plain', 'no such editor');
         return send(res, 200, 'text/html', readFileSync(f));
       }
 
       if (req.method === 'GET' && url.pathname.startsWith('/pdf/')) {
         const id = slug(url.pathname.split('/')[2] || '');
-        const f = resolve('templates', id, 'source.pdf');
+        const f = join(TEMPLATES, id, 'source.pdf');
         if (!existsSync(f)) return send(res, 404, 'text/plain', 'no such pdf');
         return send(res, 200, 'application/pdf', readFileSync(f));
       }
@@ -188,6 +211,6 @@ export function serve(port = 8123) {
       send(res, 500, 'application/json', JSON.stringify({ ok: false, error: e.message }));
     }
   });
-  server.listen(port, () => console.log(`ladder serve  →  http://localhost:${port}`));
+  server.listen(port, HOST, () => console.log(`ladder serve  →  http://${HOST}:${port}`));
   return server;
 }
