@@ -84,9 +84,15 @@ try {
       const conv = cIdx >= 0 ? args[cIdx + 1] : 'auto';
       const [pdf] = args.filter((a, i) => a !== '-o' && args[i - 1] !== '-o' && a !== '--converter' && args[i - 1] !== '--converter');
       if (!pdf || !out) { usage(); process.exit(1); }
-      const { convertPdf } = await import('../src/convert/convert.mjs');
-      const r = convertPdf(resolve(pdf), resolve(out), { converter: conv });
-      console.error(`converted with ${r.converter}${r.repaired ? ' (repaired)' : ''} -> ${out}`);
+      const { convertPdf, formatHops } = await import('../src/convert/convert.mjs');
+      try {
+        const r = convertPdf(resolve(pdf), resolve(out), { converter: conv });
+        console.error(formatHops(r.hops));
+        console.error(`converted with ${r.converter}${r.repaired ? ' (repaired)' : ''} -> ${out}`);
+      } catch (e) {
+        if (e.hops) console.error(formatHops(e.hops)); // fallback is never silent
+        throw e;
+      }
       break;
     }
     case 'extract': {
