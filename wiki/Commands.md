@@ -48,6 +48,14 @@ node bin/ladder.mjs proof templates/<id>     # before/after render check
 node bin/ladder.mjs editor templates/<id>    # (re)build preview/<id>-editor.html
 ```
 
+## ladder batch
+
+```bash
+node bin/ladder.mjs batch ./pdfs --out ./out [--no-llm]
+```
+
+A folder of PDFs → a complete, self-describing output set. **Per PDF**: `name.params.json` (full extract incl. confidence + warnings), `name.converted.svg` (Channel A — always attempted, independently of extraction), `name.generated.svg`, `name.report.md`. Plus a folder **`report.md`** summary table and a failures section. One bad PDF is reported and the batch continues (exit code 1 if anything failed). New vendors need no code — add a profile entry in `src/extract/profiles.mjs`.
+
 ## npm test
 
 ```bash

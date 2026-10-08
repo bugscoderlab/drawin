@@ -12,6 +12,7 @@ User + operator documentation for the PDF → SVG drawing pipeline.
 | [`ladder extract`](Extraction.md) | PDF → structured params (rules + one optional vision pass) |
 | `ladder generate` | params.json → drawing (matched template, real art where possible) |
 | `ladder verify` | extract → generate → dimensions cross-check |
+| `ladder batch` | Folder of PDFs → per-PDF artefacts + summary report |
 | `ladder render` | Re-render a template (L1 real art / L3 code model) with new params |
 | `ladder scaffold` | Author a new template from a PDF |
 | `ladder serve` | Upload PDF → scaffold → live editor (http://localhost:8123) |
@@ -33,6 +34,7 @@ Push to `main` → GitHub Actions syntax-checks + tests, then SSHes to the VPS a
 
 | Commit | Page |
 |---|---|
+| `e8b1409` 3.1–3.3 `ladder batch` | [Commands](Commands.md) |
 | `7704f5f` 2.1c/d generate + verify | [Extraction](Extraction.md) |
 | `8b90102` 1B.7 scoreboard core + `ladder eval` | [Extraction](Extraction.md) |
 | `b89ac93` 1.1–1.6 extract pipeline + `ladder extract` | [Extraction](Extraction.md) |
