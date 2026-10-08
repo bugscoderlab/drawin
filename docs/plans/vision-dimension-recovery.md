@@ -1,6 +1,6 @@
 # Vision dimension recovery — design (agreed 2026-10-08)
 
-Status: **designed, not implemented** (owner: implement later; do not start from this note alone — re-read `src/eval/scaffold.mjs` first).
+Status: **implemented** (`src/eval/vision.mjs` + the zero-dims trigger in `src/eval/scaffold.mjs`; tests in `test/vision.test.js`).
 
 ## Problem
 

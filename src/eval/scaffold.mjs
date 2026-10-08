@@ -261,6 +261,48 @@ export async function scaffold(pdf, opts = {}) {
   // (POST /bind) whose ids still exist in the fresh base art, and the params they
   // reference. What is deterministic (outline hiding, value and geometry bindings)
   // is always recomputed from the current art. opts.force restores the wipe.
+
+  // Vision dimension recovery (docs/plans/vision-dimension-recovery.md): when
+  // the text layer yielded zero dimension params (outline-only annotations,
+  // known case: LSB-2609-007-FHL-R00.pdf), a vision model proposes each dim's
+  // value + position; the located outline glyph cluster is replaced by a real
+  // <text> node so the machinery below binds it like any other dim. The px/mm
+  // plausibility gate (proposeGeometry's [0.005, 2] scale check) drops bad
+  // values — rejections are reported, never silent. Trigger is zero-dims only
+  // (v1); opts.llm === false disables the call, opts.llm may inject a fake
+  // (tests), and with no key the pass is a no-op (today's behavior).
+  const vision = { called: false, dims: 0, rejected: 0 };
+  if (conv.converter === 'inkscape' && rows.length && !props.some((p) => /^dim\d+$/.test(p.id)) && opts.llm !== false) {
+    const { recoverVisionDims } = await import('./vision.mjs');
+    const pageW = Number((clean.match(/<svg[^>]*\bwidth="([\d.]+)"/) || [])[1]) || 0;
+    const rec = await recoverVisionDims({
+      file, rows, svg: clean, pageW, pageH,
+      ...(typeof opts.llm === 'function' ? { call: opts.llm } : {}),
+    });
+    if (rec) {
+      vision.called = true;
+      clean = rec.svg;
+      // The synthesized <text> nodes flow through the regular proposal path —
+      // no special-casing downstream.
+      const found = propose(textRuns(clean), pageH).filter((p) => /^dim\d+$/.test(p.id));
+      // Hallucination gate, BEFORE anything is emitted: a vision dim whose
+      // px/mm falls outside [0.005, 2] (or that has no arrowed dimension line)
+      // is not trustworthy — drop the param AND its synthesized text, report.
+      const check = proposeGeometry(rows, found, clean);
+      const ok = new Set(check.lines);
+      const kept = found.filter((p) => ok.has(p.id));
+      const dropped = found.filter((p) => !ok.has(p.id));
+      if (dropped.length) {
+        clean = hideIds(clean, dropped.flatMap((p) => p.geom.glyphs.map((g) => g.id).filter(Boolean)));
+      }
+      writeFileSync(join(dir, 'base.clean.svg'), clean);
+      for (const p of kept) { p.unverified = true; props.push(p); }
+      vision.dims = kept.length;
+      vision.rejected = dropped.length;
+    }
+  }
+  // Preserve hand-edits across re-scaffolds: if this template already exists, carry
+  // the manual per-param fields (formula, label) over to the newly proposed params.
   const prevPath = join(dir, 'template.json');
   let prevById = {}, prevIdBindings = [];
   if (!opts.force && existsSync(prevPath)) {
@@ -337,7 +379,7 @@ export async function scaffold(pdf, opts = {}) {
     source: opts.sourceName || basename(file),
     match: {},
     base: { svg: 'base.clean.svg' },
-    params: props.map((p) => ({ id: p.id, label: p.label, type: 'text', default: p.value, ...(p.formula ? { formula: p.formula } : {}), ...(p.isConst ? { const: true } : {}) })),
+    params: props.map((p) => ({ id: p.id, label: p.label, type: 'text', default: p.value, ...(p.formula ? { formula: p.formula } : {}), ...(p.isConst ? { const: true } : {}), ...(p.unverified ? { unverified: true } : {}) })),
     bindings: props.filter((p) => !p.isConst && !p.idBound && !idBound.has(p.id)).map((p) => ({ value: p.value, param: p.id, mode: p.mode })),
     sample: makeSample(props),
   };
@@ -355,7 +397,7 @@ export async function scaffold(pdf, opts = {}) {
   // 4. editor
   const ed = buildEditor(dir, { previewDir: opts.previewDir || join(resolve(opts.templatesDir || 'templates'), '..', 'preview') });
 
-  return { id, dir, outlines, props, llmFormulas, geomLines, preserved: prevIdBindings.length, editor: ed.out, editorMB: (ed.bytes / 1e6).toFixed(1) };
+  return { id, dir, outlines, props, llmFormulas, geomLines, preserved: prevIdBindings.length, vision, editor: ed.out, editorMB: (ed.bytes / 1e6).toFixed(1) };
 }
 
 if (process.argv[1] && resolve(process.argv[1]).endsWith('scaffold.mjs')) {
@@ -370,6 +412,7 @@ if (process.argv[1] && resolve(process.argv[1]).endsWith('scaffold.mjs')) {
     for (const p of r.props) console.log(`     ${p.id.padEnd(12)} ${p.mode.padEnd(6)} ${JSON.stringify(p.value)}`);
     if (r.geomLines) console.log(`  geometry  : ${r.geomLines} dimension line(s) track their value`);
     if (r.preserved) console.log(`  preserved : ${r.preserved} hand-made id-binding(s) kept`);
+    if (r.vision.called) console.log(`  vision    : ${r.vision.dims} dim(s) recovered, ${r.vision.rejected} rejected by the px/mm plausibility check`);
     console.log(`  editor    : ${r.editor}  (${r.editorMB} MB)`);
   } catch (e) { console.error('ERROR: ' + e.message); process.exit(1); }
 }
