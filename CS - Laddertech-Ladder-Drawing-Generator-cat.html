@@ -64,7 +64,16 @@
       <section class="section" style="border-top:0;padding-top:0;margin-top:0">
         <h2>Product type</h2>
         <label for="productType">Drawing module</label>
-        <select id="productType"><option value="cage">Cat Ladder with Safety Cage</option><option value="trolley">Safety Ladder Trolley</option><option value="cat">Cat Ladder Body</option></select>
+        <select id="productType"><option value="cage">Cat Ladder with Safety Cage</option><option value="trolley">Safety Ladder Trolley</option><option value="cat">Cat Ladder Body</option><option value="template">Authored Template…</option></select>
+      </section>
+
+      <section class="section template-only hidden">
+        <h2>Template</h2>
+        <div class="fields">
+          <div class="wide"><label for="templateId">Template</label><select id="templateId"></select></div>
+        </div>
+        <div class="fields" id="templateFields" style="margin-top:11px"></div>
+        <p id="templateHint" style="font-size:.78rem;color:var(--muted)">Templates are the converted real drawings with bound values (see <b>templates/</b>). Serving the folder over http (e.g. <b>python3 -m http.server</b> or <b>ladder serve</b>) loads the art automatically; headless: <b>node bin/ladder.mjs render &lt;id&gt; params.json -o out.svg</b>.</p>
       </section>
 
       <section class="section">
@@ -172,6 +181,7 @@
   </main>
 
 <script src="src/core/ladder-core.js"></script>
+<script src="templates/index.js"></script>
 <script>
 // Geometry lives in src/core (renderSVG) — this file is only the form + DOM wiring.
 // Rebuild the bundle after touching src/core: npm run build (scripts/build-core.mjs).
@@ -198,10 +208,12 @@
   }
   function draw(){
     const product=$('productType').value;
+    if (product === 'template') { drawTemplate(); return; }
     const trolley=product==='trolley', cage=product==='cage';
     document.querySelectorAll('.trolley-only').forEach(el=>el.classList.toggle('hidden',!trolley));
     document.querySelectorAll('.cat-only').forEach(el=>el.classList.toggle('hidden',product!=='cat'));
     document.querySelectorAll('.cage-only').forEach(el=>el.classList.toggle('hidden',!cage));
+    document.querySelectorAll('.template-only').forEach(el=>el.classList.toggle('hidden',true));
     $('drawing').classList.toggle('landscape',trolley);
     $('drawing').setAttribute('viewBox',trolley?'0 0 1123 794':'0 0 794 1123');
     $('productSubtitle').textContent=trolley?'Safety ladder trolley - mockup drawing':cage?'Safety cage ladder · parametric drawing':'Cat ladder body - preliminary drawing';
@@ -225,8 +237,63 @@
     if (ro.overallHeight) $('trolleyHeightReadout').textContent = ro.overallHeight;
     if (ro.summary) $('cageSummary').textContent = ro.summary;
   }
+
+  // ---- Template mode (L1 authored templates; metadata from templates/index.js) ----
+  const templateList = Array.isArray(window.LADDER_TEMPLATES) ? window.LADDER_TEMPLATES : [];
+  const templateCache = {}; // id -> base SVG document text (fetched once)
+  function currentTemplate(){ return templateList.find((t) => t.id === $('templateId').value) || templateList[0]; }
+  function buildTemplateFields(){
+    const tpl = currentTemplate();
+    $('templateFields').innerHTML = tpl
+      ? tpl.params.map((p) => `<div><label for="tpl_${p.id}">${p.label || p.id}</label><input id="tpl_${p.id}" data-param="${p.id}" value="${String(p.default ?? '').replace(/"/g, '&quot;')}"></div>`).join('')
+      : '';
+  }
+  function showTemplateError(message){
+    $('validationMessage').textContent = message;
+    $('validationMessage').hidden = false;
+    $('printBtn').disabled = $('svgBtn').disabled = true;
+    $('drawing').style.opacity = '.3';
+    document.querySelector('.status span').textContent = 'Template unavailable';
+  }
+  async function drawTemplate(){
+    const tpl = currentTemplate();
+    document.querySelectorAll('.trolley-only,.cat-only,.cage-only').forEach((el) => el.classList.add('hidden'));
+    document.querySelectorAll('.template-only').forEach((el) => el.classList.remove('hidden'));
+    if (!tpl) { showTemplateError('No templates found — run: node bin/ladder.mjs scaffold "file.pdf"'); return; }
+    const w = tpl.base?.width || 794, h = tpl.base?.height || 1123;
+    const landscape = w > h;
+    $('drawing').classList.toggle('landscape', landscape);
+    $('drawing').setAttribute('viewBox', `0 0 ${w} ${h}`);
+    $('productSubtitle').textContent = `Template - ${tpl.name}`;
+    $('pageFormat').textContent = landscape ? 'A4 landscape customer copy' : 'A4 portrait customer copy';
+    $('printOrientation').textContent = landscape ? '@page{size:A4 landscape;margin:0}' : '@page{size:A4 portrait;margin:0}';
+    try {
+      if (!templateCache[tpl.id]) {
+        const res = await fetch(`templates/${tpl.id}/${tpl.base.svg || 'base.clean.svg'}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        templateCache[tpl.id] = await res.text();
+      }
+    } catch {
+      showTemplateError(`Cannot load ${tpl.id}/${tpl.base?.svg} — Template mode needs the folder served over http (python3 -m http.server / ladder serve), or use the CLI: node bin/ladder.mjs render ${tpl.id} params.json -o out.svg`);
+      return;
+    }
+    const values = {};
+    for (const p of tpl.params) values[p.id] = $(`tpl_${p.id}`)?.value ?? p.default;
+    const eff = LC.resolveParams(tpl.params, values);
+    const r = LC.renderTemplate(templateCache[tpl.id], tpl.bindings, eff);
+    const m = r.svg.match(/<svg\b[^>]*>([\s\S]*)<\/svg>\s*$/);
+    $('drawing').setAttribute('aria-label', `${tpl.name} drawing`);
+    $('drawing').innerHTML = m ? m[1] : r.svg;
+    clearError();
+  }
+  (function initTemplates(){
+    $('templateId').innerHTML = templateList.map((t) => `<option value="${t.id}">${t.name} (${t.id})</option>`).join('');
+    buildTemplateFields();
+    $('templateFields').addEventListener('input', () => { if ($('productType').value === 'template') draw(); });
+    $('templateId').addEventListener('change', () => { buildTemplateFields(); draw(); });
+  })();
   ids.forEach(id => $(id).addEventListener('input',draw));
-  $('productType').addEventListener('change',()=>{const d=productDefaults[$('productType').value];Object.entries(d).forEach(([k,v])=>$(k).value=v);draw()});
+  $('productType').addEventListener('change',()=>{const d=productDefaults[$('productType').value];if(d)Object.entries(d).forEach(([k,v])=>$(k).value=v);draw()});
   $('printBtn').addEventListener('click',()=>window.print());
   $('svgBtn').addEventListener('click',()=>{
     const content = `<?xml version="1.0" encoding="UTF-8"?>\n${$('drawing').outerHTML}`;

@@ -4,6 +4,7 @@
 //   node bin/ladder.mjs serve              local upload -> scaffold -> editor server
 //
 import { resolve } from 'node:path';
+import { readFileSync, writeFileSync } from 'node:fs';
 
 const [cmd, arg] = process.argv.slice(2);
 
@@ -12,7 +13,8 @@ const usage = () => {
   node bin/ladder.mjs serve [port]
   node bin/ladder.mjs scaffold <file.pdf>
   node bin/ladder.mjs editor   <templateDir>
-  node bin/ladder.mjs proof    <templateDir>`);
+  node bin/ladder.mjs proof    <templateDir>
+  node bin/ladder.mjs render   <templateId> [params.json] [-o out.svg]`);
 };
 
 try {
@@ -45,6 +47,24 @@ try {
       if (!arg) { usage(); process.exit(1); }
       process.argv[2] = arg;
       await import('../src/eval/proofBind.mjs');
+      break;
+    }
+    case 'render': {
+      const args = process.argv.slice(3);
+      const oIdx = args.indexOf('-o');
+      const out = oIdx >= 0 ? args[oIdx + 1] : null;
+      const pos = args.filter((a, i) => a !== '-o' && args[i - 1] !== '-o');
+      const [id, paramsFile] = pos;
+      if (!id) { usage(); process.exit(1); }
+      const values = paramsFile ? JSON.parse(readFileSync(paramsFile, 'utf8')) : {};
+      const { renderById } = await import('../src/templates/renderCmd.mjs');
+      const r = renderById(resolve('templates'), id, values);
+      if (r.error) throw new Error(r.error);
+      const misses = r.report.filter((x) => !x.ok);
+      if (out) writeFileSync(out, r.svg + '\n');
+      else console.log(r.svg);
+      console.error(`rendered ${id}: ${r.report.length - misses.length}/${r.report.length} bindings ok`
+        + (misses.length ? ` — MISSED: ${misses.map((m) => `${m.param} (${m.reason})`).join(', ')}` : ''));
       break;
     }
     default:
