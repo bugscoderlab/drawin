@@ -1,6 +1,6 @@
 # Laddertech Ladder Drawing — PDF → SVG Plan
 
-Status: **in progress — Phase 0 core rewire DONE (2026-10-08); template system built & proven. Next: template registry (1C.1/1C.5)**
+Status: **in progress — Phase 0–1C + 1/2.1/2.2 done (2026-10-08). Next: generate/verify CLI, then batch**
 Folder: `/Users/z/Documents/drawin`
 Owner inputs: 3 reference PDFs in this folder, 1 existing HTML generator
 Last updated: 2026-10-08
@@ -39,7 +39,7 @@ Runs **headless (CLI, for scale)** and **in-browser (the HTML, for interactive u
 - **Template registry (1C.1/1C.5, done 2026-10-08)** — `src/templates/registry.mjs`: loads `templates/*/template.json` (bad entries skipped, never fatal) + L3 code-model seeds; signal scoring (keywords/pattern/dimensions) with a threshold that a drawing-no pattern alone cannot pass; ties prefer real art over code models. `test/registry.test.js` (7 tests) locks the corpus mappings: 003 → `trolley-slt`, 004 → `cage-fhl`, 009 → `cat-l3`, unknown → `null`.
 - **`ladder render` + Template mode (1C.6, done 2026-10-08)** — `src/templates/renderCmd.mjs` renders any registry entry (L1 real art with binding report, L3 code models through the core); the generator HTML has a Template mode fed by `templates/index.js` (metadata manifest from `scripts/build-manifest.mjs`; base art fetched per template over http, CLI pointed to on `file://`). `test/render-cmd.test.js` locks sample re-renders, defaults, L3 overrides, and manifest↔registry sync.
 
-**Not built:** P1 pdf.js extractor, L2 geometry, `ladder batch`, MCP tools, the `009` conversion fix, `extract`/`generate`/`verify` CLI subcommands.
+**Not built:** pdf.js extractor (browser text layer, Phase 2/7), L2 geometry, `ladder batch`, MCP tools, the `009` conversion fix, `generate`/`verify`/`eval` CLI subcommands.
 
 ---
 
@@ -250,20 +250,10 @@ Bindings today: `{"value": "…", "param": "…", "mode": "text"|"group"}` (anch
 
 ### Phase 1 — Rule-based extractor
 
-- [ ] **1.1** `pdfText.js`: `getTextContent()` → items `{str, x, y, w, h, fontSize, fontName}` in page coords.
-- [ ] **1.2** `stitch.js`: cluster items into lines by y, sort by x, merge adjacent runs when the gap is small; reconstruct fragmented numbers (`6 6 0 0` → `6600`, `2 0 5 3 . 6` → `2053.6`) and dates (`9 / 7 / 2 0 2 6`).
-- [ ] **1.3** `normalize.js`: parse `3,500 MM`, `9 STEP`, `60°`, `150KG`, `6650mm + 900mm`, `7.5"`, `07-09-2026` into typed values with units.
-- [ ] **1.4** `fields.js`: generic patterns for drawing no, revision, material, finishing, date, working load, steps, angle. Apply the two fixes proven in the probe:
-  - **de-fragmentation** — match against a whitespace-stripped copy (poppler emits `Heigh t : 6 650mm + 900mm`), then parse `Height : A + B` into `floorToLanding` / `handrailHeight`;
-  - **company disambiguation** — collect `… SDN BHD` candidates, skip the manufacturer (`LADDERTECH` / `NEW AGE` / `NAR`), and bridge the `FHL CONSTRUCTION … Tel SDN BHD` split;
-  - **productType by keyword** — `CAGE` → cage, `TROLLEY` → trolley, else `cat`. Never let the LLM choose it.
-- [ ] **1.5** Profiles: locate the title-block band geometrically, then apply `nar` / `laddertech` label maps.
-- [ ] **1.6** `extract.js`: orchestrate → `{module, params, confidence, warnings, unmappedText}`, mapping to core module field ids.
-- [ ] **1.7** Tests against all three PDFs. Expected anchors:
-  - 003 trolley: 9 steps, height 3500, angle 60°, 150KG, 980 / 700 / 2372, customer RAHABCO
-  - 004 cage: 6650 + 900, 450 width, 7.5" bracket, `140` bottom rung, customer FHL
-  - 009 cat: overall height 3200, 215 / 150, 150KG, customer FHL, drawing `LSB/2609/007/FHL/R00`
-- [ ] **1.8** Coverage report script over the corpus (`field → hit/miss`).
+- [x] **1.1–1.4** Extraction pipeline in `src/extract/`: `text.mjs` (pdftotext), `stitch.mjs` (raw/flat/sq views + company bridge), `normalize.mjs` (typed values), `rules.mjs` (field patterns incl. de-fragmentation on the sq copy + manufacturer disambiguation). *(Built; pdftotext as the text source — the pdf.js variant with coordinates is the browser extractor, Phase 2/7.)*
+- [x] **1.5** Profiles: `profiles.mjs` — `nar` / `laddertech` / `generic` as data; nar canonicalises the drawing number to LSB and derives revision from its R-suffix. Detected on the corpus: 003/004 → nar, 009 → laddertech. *(Built.)*
+- [x] **1.6** `extract.mjs`: orchestrate → `{ file, profile, module, params, core, confidence, warnings, unmappedText }`; typed fields, optional ONE vision pass filling rule blanks (cached by pdf+prompt hash, rules win on disagreement), validation against core ranges. Never throws for an unrecognised drawing. *(Built.)*
+- [x] **1.7/1.8** Tests against all three PDFs (`test/extract.test.js`, corpus assertions for every rules anchor) + `warnings`/`unmappedText` as the coverage signal. *(Built.)*
 
 **Acceptance:** ≥90% of the mapped fields extract correctly on each of the 3 PDFs, and every miss appears in `warnings`/`unmappedText`.
 
@@ -365,12 +355,7 @@ Every pass sees the **whole page** (no cropping).
 
 ### Phase 2 — Both front ends
 
-- [ ] **2.1** CLI `bin/ladder.mjs`:
-  - `ladder convert in.pdf -o out.svg [--converter auto|inkscape|pdftocairo]`
-  - `ladder extract in.pdf -o params.json [--llm-whole]` — merged extractor (rules + one vision pass)
-  - `ladder generate params.json -o drawing.svg`
-  - `ladder verify in.pdf` — compare extracted vs generated dimensions
-  - `ladder eval` — A/B scoreboard
+- [x] **2.1 (partial)** CLI `bin/ladder.mjs`: `convert` ✅, `extract` ✅ (`--llm-whole` forces vision for all fields; default fills only rule blanks when a key is configured; `--no-llm` rules-only), `render` ✅, `serve/scaffold/editor/proof` ✅. Remaining: `generate`, `verify`, `eval`, `batch`.
 - [x] **2.2** `src/convert/convert.mjs`: **fallback chain** — Inkscape (timeout 120s) → pdftocairo on crash/timeout/non-zero exit; `--converter auto|inkscape|pdftocairo` (default `auto`). `ladder convert in.pdf -o out.svg` wired; scaffold now uses the same chain (outline-cleanup only runs on the Inkscape path, which has the text layer). CI runs `npm test` before deploy. *(Built.)*
 - [x] **2.3** **Superseded by `ladder serve`.** The generated editor loads a template, shows the source PDF (view-only), edits params live (with formulas), supports click-to-bind, and exports SVG. Browser-side extraction of a *new* PDF still needs the server (conversion is native). *(Built.)*
 - [ ] **2.4** Add **Download converted SVG** in the HTML (via the CLI/convert path, or best-effort in-browser).

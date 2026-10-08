@@ -15,7 +15,8 @@ const usage = () => {
   node bin/ladder.mjs editor   <templateDir>
   node bin/ladder.mjs proof    <templateDir>
   node bin/ladder.mjs render   <templateId> [params.json] [-o out.svg]
-  node bin/ladder.mjs convert  <file.pdf> -o out.svg [--converter auto|inkscape|pdftocairo]`);
+  node bin/ladder.mjs convert  <file.pdf> -o out.svg [--converter auto|inkscape|pdftocairo]
+  node bin/ladder.mjs extract  <file.pdf> [-o params.json] [--llm-whole|--no-llm]`);
 };
 
 try {
@@ -79,6 +80,22 @@ try {
       const { convertPdf } = await import('../src/convert/convert.mjs');
       const r = convertPdf(resolve(pdf), resolve(out), { converter: conv });
       console.error(`converted with ${r.converter} -> ${out}`);
+      break;
+    }
+    case 'extract': {
+      const args = process.argv.slice(3);
+      const oIdx = args.indexOf('-o');
+      const out = oIdx >= 0 ? args[oIdx + 1] : null;
+      const llm = args.includes('--llm-whole') ? 'whole' : args.includes('--no-llm') ? 'off' : 'auto';
+      const [pdf] = args.filter((a, i) => !['-o', '--llm-whole', '--no-llm'].includes(a) && args[i - 1] !== '-o');
+      if (!pdf) { usage(); process.exit(1); }
+      const { extractParams } = await import('../src/extract/extract.mjs');
+      const r = await extractParams(resolve(pdf), { llm });
+      const json = JSON.stringify(r, null, 2) + '\n';
+      if (out) writeFileSync(out, json); else console.log(json);
+      const filled = Object.values(r.confidence).filter((c) => c.source?.startsWith('vision')).length;
+      const rules = Object.values(r.confidence).filter((c) => c.source === 'rules').length;
+      console.error(`extracted ${r.file}: module=${r.module} profile=${r.profile} fields ${rules} rules + ${filled} vision-filled, ${r.warnings.length} warning(s)`);
       break;
     }
     default:
