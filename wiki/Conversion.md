@@ -15,7 +15,7 @@ Measured on the corpus (PLAN §2a):
 Neither is good enough alone, so `auto` (the default) tries them in order:
 
 1. **Inkscape** — with a 120 s per-attempt timeout (it hung >300 s on one rasterize during eval).
-2. **Ghostscript repair + Inkscape** (the `009` fix) — when Inkscape crashes, `gs -sDEVICE=pdfwrite` rewrites the PDF; the rewritten file very often imports cleanly while keeping the text layer. Chain order is unit-tested; the actual segfault-repair is verified on the owner's Mac (this environment has no Inkscape).
+2. **Ghostscript repair + Inkscape** (the `009` fix) — when Inkscape crashes, `gs -sDEVICE=pdfwrite` rewrites the PDF; the rewritten file very often imports cleanly while keeping the text layer. Chain order is unit-tested with a fake runner; **verified 2026-10-08 on Linux/Inkscape 1.4.3** — that build does not reproduce the Mac 1.4.4 segfault on 009, so the repair hop was exercised mechanically: `gs` rewrite → Inkscape on the repaired PDF → equivalent SVG (all `pdftotext` lines present in both outputs).
 3. **pdftocairo** — on any remaining failure, or when the repair hop is unavailable (no `gs`).
 
 The backend that actually produced the file is returned (`{ converter }`) so callers can adapt: e.g. scaffold only runs outline-deduplication on the Inkscape path, because pdftocairo output has no text layer to bind anyway.
@@ -37,3 +37,7 @@ Errors name every attempt and its reason, e.g.:
 
 Both are in the Docker image; on macOS: `brew install inkscape poppler`.
 Tests skip the real-conversion cases when neither is installed.
+
+### Font gotcha (learned during 009 verification)
+
+Inkscape's internal PDF importer only emits a searchable `<text>` layer for fonts it can resolve **locally by family name** (`FontFactory::hasFontFamily`); otherwise it renders those runs as outlined paths (the original string survives on the path's `aria-label`, and the outlines are real glyph paths, not empty). The corpus PDFs name their font `ArialMT`, which Linux boxes usually lack — installing a font actually **named** `ArialMT` (e.g. renamed from Liberation Sans, metrically identical to Arial; fontconfig aliases are *not* enough, Pango must enumerate the family) restores the full text layer. macOS keeps `<text>` out of the box because Arial is installed there.

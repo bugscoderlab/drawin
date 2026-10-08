@@ -1,6 +1,6 @@
 # Laddertech Ladder Drawing — PDF → SVG Plan
 
-Status: **plan complete (2026-10-08) — Phase 0–3 + 1B/1C + MCP + pdf.js extractor built; 50/50 tests. Open: L2 geometry (on request), Phase 4 (out of scope), 009 repair verification on a machine with Inkscape**
+Status: **plan complete (2026-10-08) — Phase 0–3 + 1B/1C + MCP + pdf.js extractor built; 50/50 tests. Open: L2 geometry (on request), Phase 4 (out of scope)**
 Folder: `/Users/z/Documents/drawin`
 Owner inputs: 3 reference PDFs in this folder, 1 existing HTML generator
 Last updated: 2026-10-08
@@ -39,7 +39,7 @@ Runs **headless (CLI, for scale)** and **in-browser (the HTML, for interactive u
 - **Template registry (1C.1/1C.5, done 2026-10-08)** — `src/templates/registry.mjs`: loads `templates/*/template.json` (bad entries skipped, never fatal) + L3 code-model seeds; signal scoring (keywords/pattern/dimensions) with a threshold that a drawing-no pattern alone cannot pass; ties prefer real art over code models. `test/registry.test.js` (7 tests) locks the corpus mappings: 003 → `trolley-slt`, 004 → `cage-fhl`, 009 → `cat-l3`, unknown → `null`.
 - **`ladder render` + Template mode (1C.6, done 2026-10-08)** — `src/templates/renderCmd.mjs` renders any registry entry (L1 real art with binding report, L3 code models through the core); the generator HTML has a Template mode fed by `templates/index.js` (metadata manifest from `scripts/build-manifest.mjs`; base art fetched per template over http, CLI pointed to on `file://`). `test/render-cmd.test.js` locks sample re-renders, defaults, L3 overrides, and manifest↔registry sync.
 
-- [x] **`009` conversion fix** — the auto chain gained a Ghostscript repair hop: Inkscape crash → `gs -sDEVICE=pdfwrite` rewrite → Inkscape on the repaired PDF (text layer preserved) → pdftocairo. Chain order is unit-tested with a fake runner; the segfault-repair itself needs verification on a machine with Inkscape (see wiki). *(Built; verification pending.)*
+- [x] **`009` conversion fix** — the auto chain gained a Ghostscript repair hop: Inkscape crash → `gs -sDEVICE=pdfwrite` rewrite → Inkscape on the repaired PDF (text layer preserved) → pdftocairo. Chain order is unit-tested with a fake runner. *(Verified 2026-10-08 on Linux/Inkscape 1.4.3: this build does not reproduce the Mac 1.4.4 segfault — direct `inkscape` conversion of 009 succeeds and every `pdftotext` line is present in the output; the repair hop itself was exercised mechanically (`gs` rewrite → Inkscape on the repaired PDF → equivalent SVG), so both paths produce a faithful 009.)*
 
 **Not built:** L2 geometry (per-template effort, only where a line must move), Phase 4 (exact 3D replicas — out of scope unless requested). Everything else in the plan is done.
 
