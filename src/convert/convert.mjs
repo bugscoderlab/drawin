@@ -1,12 +1,17 @@
 // PDF → SVG conversion with the measured fallback chain (PLAN §2a):
 //   1. Inkscape  — keeps real text, smaller files, BUT segfaults on some PDFs
-//   2. pdftocairo — always works, but outlines the text (no <text> runs)
-// `auto` (default) tries Inkscape with a timeout and falls back on any failure.
-// Channel A must always succeed — convertPdf either returns { converter } or
-// throws with every attempt's reason.
+//   2. gs repair + Inkscape — Ghostscript rewrite of the PDF often cures the
+//      importer crash while keeping the text layer (the `009` fix)
+//   3. pdftocairo — always works, but outlines the text (no <text> runs)
+// `auto` (default) tries them in order. Channel A must always succeed —
+// convertPdf either returns { converter } or throws with every attempt's reason.
+//
+// The backend steps live in `runner` so the chain logic is unit-testable
+// without Inkscape/Ghostscript installed.
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, statSync, mkdtempSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 const INK = existsSync(join(process.env.HOME || '', '.local/bin/inkscape'))
@@ -18,60 +23,97 @@ const DEFAULT_TIMEOUT = 120_000; // ms — Inkscape hung >300s on rasterize duri
 const lastLines = (buf, n = 2, max = 200) =>
   String(buf || '').trim().split('\n').slice(-n).join(' ').slice(0, max);
 
-function runInkscape(pdf, out, timeout) {
-  execFileSync(INK, ['--export-type=svg', `--export-filename=${out}`, pdf], { stdio: 'pipe', timeout });
-}
-
-function runPdftocairo(pdf, out, timeout) {
-  execFileSync('pdftocairo', ['-svg', pdf, out], { stdio: 'pipe', timeout });
-}
-
-const BACKENDS = {
-  inkscape: { run: runInkscape, label: 'Inkscape' },
-  pdftocairo: { run: runPdftocairo, label: 'pdftocairo' },
+/** Real backends. Each throws on failure. gsRepair returns a repaired PDF path or null. */
+const realRunner = {
+  inkscape(pdf, out, timeout) {
+    execFileSync(INK, ['--export-type=svg', `--export-filename=${out}`, pdf], { stdio: 'pipe', timeout });
+  },
+  pdftocairo(pdf, out, timeout) {
+    execFileSync('pdftocairo', ['-svg', pdf, out], { stdio: 'pipe', timeout });
+  },
+  gsRepair(pdf, timeout) {
+    const dir = mkdtempSync(join(tmpdir(), 'ladder-gs-'));
+    const fixed = join(dir, 'repaired.pdf');
+    execFileSync('gs', ['-dNOPAUSE', '-dBATCH', '-sDEVICE=pdfwrite', `-sOutputFile=${fixed}`, pdf],
+      { stdio: 'pipe', timeout });
+    return existsSync(fixed) && statSync(fixed).size > 500 ? fixed : null;
+  },
 };
 
-/** Which backends have their binary on PATH? (for tests + honest error messages) */
-export function availableConverters() {
+/** Which converters have their binary on PATH? (for tests + honest errors) */
+export function availableConverters(runner = realRunner) {
   const ok = [];
-  for (const [name, b] of Object.entries(BACKENDS)) {
+  for (const name of ['inkscape', 'gs', 'pdftocairo']) {
     try {
-      execFileSync(name === 'inkscape' ? INK : name, [name === 'inkscape' ? '--version' : '-v'], { stdio: 'pipe' });
+      execFileSync(name === 'inkscape' ? INK : name, [name === 'inkscape' ? '--version' : name === 'gs' ? '--version' : '-v'],
+        { stdio: 'pipe' });
       ok.push(name);
     } catch { /* not installed */ }
   }
   return ok;
 }
 
+const outputOK = (out) => { try { return statSync(out).size > 200; } catch { return false; } };
+
 /**
  * Convert `pdfPath` to `outSvg`.
- * opts.converter: 'auto' | 'inkscape' | 'pdftocairo'  (default 'auto')
- * opts.timeout:   per-attempt timeout ms (default 120s)
- * Returns { converter } naming the backend that produced outSvg.
+ *   converter: 'auto' | 'inkscape' | 'pdftocairo'  (default 'auto')
+ *   timeout:   per-attempt timeout ms (default 120s)
+ *   runner:    backend steps (tests inject fakes)
+ * Returns { converter, repaired? } naming the backend that produced outSvg.
  */
-export function convertPdf(pdfPath, outSvg, { converter = 'auto', timeout = DEFAULT_TIMEOUT } = {}) {
-  const order = converter === 'auto' ? ['inkscape', 'pdftocairo']
-    : converter === 'inkscape' ? ['inkscape']
-    : ['pdftocairo'];
+export function convertPdf(pdfPath, outSvg, { converter = 'auto', timeout = DEFAULT_TIMEOUT, runner = realRunner } = {}) {
   const errors = [];
-  for (const name of order) {
-    const backend = BACKENDS[name];
+  const tryInkscape = (src, tag) => {
+    runner.inkscape(src, outSvg, timeout);
+    if (!outputOK(outSvg)) throw new Error('produced no/empty SVG');
+    return tag;
+  };
+
+  if (converter === 'inkscape' || converter === 'auto') {
     try {
-      backend.run(pdfPath, outSvg, timeout);
-      if (existsSync(outSvg) && backendWorked(outSvg)) return { converter: name };
-      errors.push(`${name}: produced no/empty SVG`);
+      return { converter: tryInkscape(pdfPath, 'inkscape') };
     } catch (e) {
-      const sig = e.signal ? ` (signal ${e.signal}${e.signal === 'SIGSEGV' ? ' — segfault' : ''})` : '';
-      const why = e.code === 'ENOENT' ? `${name} not found on PATH`
-        : e.code === 'ETIMEDOUT' ? `timed out after ${timeout / 1000}s`
-        : lastLines(e.stderr) || e.message;
-      errors.push(`${name}${sig}: ${why}`);
+      errors.push(describe('inkscape', e, timeout));
     }
   }
+
+  if (converter === 'auto') {
+    // The `009` fix: a Ghostscript rewrite frequently cures importer crashes
+    // while preserving the text layer; retry Inkscape on the repaired PDF.
+    try {
+      const fixed = runner.gsRepair(pdfPath, timeout);
+      if (fixed) {
+        try {
+          return { converter: tryInkscape(fixed, 'inkscape'), repaired: true };
+        } catch (e) {
+          errors.push(`inkscape(repaired): ${describe('', e, timeout).trim()}`);
+        }
+      } else {
+        errors.push('gs: repair produced no output');
+      }
+    } catch (e) {
+      errors.push(describe('gs', e, timeout));
+    }
+  }
+
+  if (converter === 'pdftocairo' || converter === 'auto') {
+    try {
+      runner.pdftocairo(pdfPath, outSvg, timeout);
+      if (!outputOK(outSvg)) throw new Error('produced no/empty SVG');
+      return { converter: 'pdftocairo' };
+    } catch (e) {
+      errors.push(describe('pdftocairo', e, timeout));
+    }
+  }
+
   throw new Error(`conversion failed — ${errors.join(' | ')}`);
 }
 
-/** Inkscape can exit 0 yet write nothing on some inputs; guard against empty output. */
-function backendWorked(outSvg) {
-  try { return statSync(outSvg).size > 200; } catch { return false; }
+function describe(name, e, timeout) {
+  const sig = e.signal ? ` (signal ${e.signal}${e.signal === 'SIGSEGV' ? ' — segfault' : ''})` : '';
+  const why = e.code === 'ENOENT' ? `${name} not found on PATH`
+    : e.code === 'ETIMEDOUT' ? `timed out after ${timeout / 1000}s`
+    : lastLines(e.stderr) || e.message;
+  return `${name}${sig}: ${why}`;
 }

@@ -168,6 +168,7 @@
       <div class="actions">
         <button class="primary" id="printBtn">Print / Save PDF</button>
         <button class="secondary" id="svgBtn">Download SVG</button>
+        <button class="ghost" id="paramsBtn">Download params</button>
         <button class="ghost" id="saveBtn">Save Draft</button>
         <button class="ghost" id="resetBtn">Reset Example</button>
       </div>
@@ -300,6 +301,20 @@
     const blob = new Blob([content],{type:'image/svg+xml'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`${$('drawingNo').value.replaceAll('/','-') || 'ladder-drawing'}.svg`;a.click();URL.revokeObjectURL(a.href);
   });
   $('saveBtn').addEventListener('click',()=>{localStorage.setItem('laddertechDrawingDraft',JSON.stringify(state()));$('saveBtn').textContent='Draft Saved';setTimeout(()=>$('saveBtn').textContent='Save Draft',1400)});
+  $('paramsBtn').addEventListener('click',()=>{
+    // Bridge to the CLI: this file feeds `ladder generate params.json -o out.svg`.
+    let payload;
+    if ($('productType').value === 'template') {
+      const tpl = currentTemplate();
+      const values = tpl ? Object.fromEntries(tpl.params.map((p) => [p.id, $(`tpl_${p.id}`)?.value ?? p.default])) : {};
+      payload = { template: tpl?.id ?? null, values };
+    } else {
+      payload = { module: $('productType').value, values: state() };
+    }
+    const blob = new Blob([JSON.stringify(payload, null, 2) + '\n'], { type: 'application/json' });
+    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
+    a.download = `${$('drawingNo').value.replaceAll('/','-') || 'ladder'}-params.json`; a.click(); URL.revokeObjectURL(a.href);
+  });
   $('resetBtn').addEventListener('click',()=>{ids.forEach(id=>$(id).value=defaults[id]);localStorage.removeItem('laddertechDrawingDraft');draw()});
   try{const saved=JSON.parse(localStorage.getItem('laddertechDrawingDraft'));if(saved)ids.forEach(id=>{if(saved[id]!==undefined)$(id).value=(id==='cageBracketDepth' && String(saved[id]).includes('inch'))?'190.5':saved[id]})}catch{}
   draw();

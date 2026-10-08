@@ -24,7 +24,9 @@ import { extractParams } from './extract/extract.mjs';
  * Returns { svg, via, bound, unbound, match }.
  */
 export function generateFromExtract(extract, { templatesDir }) {
-  const p = extract.params ?? {};
+  // Accepts an extractParams result ({ params }) or the HTML "Download params"
+  // payload ({ module, values }); `ladder render` consumes { values } directly.
+  const p = extract.params ?? extract.values ?? {};
   const module = extract.module ?? 'cat';
   const { templates } = loadRegistry(templatesDir);
   // productName is the strongest title signal; fall back to the module's
@@ -54,7 +56,8 @@ export function generateFromExtract(extract, { templatesDir }) {
   }
 
   const useModule = hit?.template?.module ?? extract.module ?? 'cat';
-  const core = extract.core ?? {};
+  // extract payloads carry `core`; HTML payloads carry core-typed `values`.
+  const core = { ...(extract.core ?? {}), ...(extract.values ?? {}) };
   const r = renderDocument(useModule, paramsFor(useModule, core));
   if (r.error) return { svg: null, via: `l3:${useModule}`, error: r.error, match: hit };
   return { svg: r.document, via: `l3:${useModule}`, bound: [], unbound: [], match: hit };
