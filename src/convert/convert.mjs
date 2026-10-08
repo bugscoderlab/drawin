@@ -77,7 +77,7 @@ export function formatHops(hops) {
  *   timeout:   per-attempt timeout ms (default 120s)
  *   runner:    backend steps (tests inject fakes)
  * Returns { converter, repaired?, hops } naming the backend that produced outSvg
- * and every chain attempt in order: { attempt, backend, ok, reason? }.
+ * and every chain attempt in order: { attempt, ok, reason? }.
  */
 export function convertPdf(pdfPath, outSvg, { converter = 'auto', timeout = DEFAULT_TIMEOUT, runner = realRunner } = {}) {
   const errors = [];
@@ -91,7 +91,7 @@ export function convertPdf(pdfPath, outSvg, { converter = 'auto', timeout = DEFA
   const fail = (hop, e) => { hop.reason = hopReason(e, timeout); };
 
   if (converter === 'inkscape' || converter === 'auto') {
-    const hop = { attempt: 'inkscape', backend: 'inkscape', ok: false };
+    const hop = { attempt: 'inkscape', ok: false };
     hops.push(hop);
     try {
       return { converter: tryInkscape(pdfPath, hop), hops };
@@ -107,11 +107,11 @@ export function convertPdf(pdfPath, outSvg, { converter = 'auto', timeout = DEFA
     // rewriters in order: gs (Linux-verified), then pdftocairo -pdf (the
     // macOS/Inkscape 1.4.4 cure — gs does not fix 009 there).
     const repairHops = [
-      ['gsRepair', 'repaired', 'gs repair', 'gs'],
-      ['cairoRepair', 'cairo-repaired', 'cairo repair', 'pdftocairo'],
+      ['gsRepair', 'repaired', 'gs repair'],
+      ['cairoRepair', 'cairo-repaired', 'cairo repair'],
     ];
-    for (const [step, tag, attempt, backend] of repairHops) {
-      const hop = { attempt, backend, ok: false };
+    for (const [step, tag, attempt] of repairHops) {
+      const hop = { attempt, ok: false };
       hops.push(hop);
       try {
         const fixed = runner[step](pdfPath, timeout);
@@ -134,7 +134,7 @@ export function convertPdf(pdfPath, outSvg, { converter = 'auto', timeout = DEFA
   }
 
   if (converter === 'pdftocairo' || converter === 'auto') {
-    const hop = { attempt: 'pdftocairo', backend: 'pdftocairo', ok: false };
+    const hop = { attempt: 'pdftocairo', ok: false };
     hops.push(hop);
     try {
       runner.pdftocairo(pdfPath, outSvg, timeout);
@@ -152,9 +152,13 @@ export function convertPdf(pdfPath, outSvg, { converter = 'auto', timeout = DEFA
   throw err;
 }
 
+/** `signal SIGSEGV — segfault` or '' — shared by hop lines and error detail. */
+const signalSuffix = (e) =>
+  e.signal ? `signal ${e.signal}${e.signal === 'SIGSEGV' ? ' — segfault' : ''}` : '';
+
 function hopReason(e, timeout) {
-  const sig = e.signal ? `signal ${e.signal}${e.signal === 'SIGSEGV' ? ' — segfault' : ''}: ` : '';
-  return `${sig}${detail(e, timeout, '')}`.trim();
+  const sig = signalSuffix(e);
+  return `${sig ? `${sig}: ` : ''}${detail(e, timeout, '')}`.trim();
 }
 
 function detail(e, timeout, name) {
@@ -164,6 +168,6 @@ function detail(e, timeout, name) {
 }
 
 function describe(name, e, timeout) {
-  const sig = e.signal ? ` (signal ${e.signal}${e.signal === 'SIGSEGV' ? ' — segfault' : ''})` : '';
-  return `${name}${sig}: ${detail(e, timeout, name)}`;
+  const sig = signalSuffix(e);
+  return `${name}${sig ? ` (${sig})` : ''}: ${detail(e, timeout, name)}`;
 }

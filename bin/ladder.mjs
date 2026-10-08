@@ -32,16 +32,9 @@ try {
     }
     case 'scaffold': {
       if (!arg) { usage(); process.exit(1); }
-      const { scaffold } = await import('../src/eval/scaffold.mjs');
+      const { scaffold, reportScaffold } = await import('../src/eval/scaffold.mjs');
       const r = await scaffold(arg, { force: process.argv.slice(3).includes('--force') });
-      console.log(`scaffolded: ${r.id}`);
-      console.log(`  folder   : ${r.dir}`);
-      console.log(`  outlines : ${r.outlines} duplicate(s) hidden`);
-      console.log(`  proposed : ${r.props.length} binding(s)`);
-      for (const p of r.props) console.log(`     ${p.id.padEnd(12)} ${p.mode.padEnd(6)} ${JSON.stringify(p.value)}`);
-      if (r.geomLines) console.log(`  geometry  : ${r.geomLines} dimension line(s) track their value`);
-      if (r.preserved) console.log(`  preserved : ${r.preserved} hand-made id-binding(s) kept`);
-      console.log(`  editor   : ${r.editor}  (${r.editorMB} MB)`);
+      reportScaffold(r);
       break;
     }
     case 'editor': {

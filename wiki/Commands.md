@@ -46,6 +46,7 @@ node bin/ladder.mjs serve [port]    # default 8123
 ```
 
 Upload page → scaffold → live editor bridge. Conversion is native, which is why this needs the server (or the Docker container).
+Set `DRAWIN_ROOT=/path/to/root` to pin the server's templates/preview dirs somewhere other than its own install location (test seam for the HTTP tests).
 
 ## ladder proof / ladder editor
 

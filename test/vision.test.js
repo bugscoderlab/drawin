@@ -12,7 +12,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { findOutlineCluster, synthesizeDimText, recoverVisionDims } from '../src/eval/vision.mjs';
-import { scaffold } from '../src/eval/scaffold.mjs';
+import { scaffold, reportScaffold } from '../src/eval/scaffold.mjs';
 import { textRuns } from '../src/templates/render.mjs';
 import { availableConverters } from '../src/convert/convert.mjs';
 
@@ -119,12 +119,47 @@ test('recoverVisionDims: junk proposals are dropped (bad value / pct / no cluste
     { value: 'abc', x_pct: 0.5, y_pct: 0.25 },
     { value: '3200', x_pct: 1.7, y_pct: 0.25 },
     { value: '6400', x_pct: 0.9, y_pct: 0.9 },   // valid shape, but no outline cluster there
-    { value: '3200', x_pct: 0.5, y_pct: 0.25 },  // duplicate value: synthesized once
+    { value: '3200', x_pct: 0.5, y_pct: 0.25 },  // duplicate value AND position: synthesized once
   ] }));
   const r = await recoverVisionDims({
     rows: vRows, svg: vSvg, pageW: 800, pageH: 1200, image: { base64: 'x', mimeType: 'image/png' }, call: llm,
   });
   assert.equal(r.dims.length, 1, 'only the one locatable, well-formed dim survives');
+});
+
+test('recoverVisionDims: same value at distinct positions is NOT a duplicate — symmetric dims all recover', async () => {
+  // Two outlined "600" numbers on opposite ends of the page (a common
+  // symmetric-dimension case): value alone must not dedupe them.
+  const rows = [
+    { id: 'path1', x: 196, y: 296, w: 8, h: 8 },   // cluster near (25%, 25%) of 800x1200
+    { id: 'path2', x: 205, y: 296, w: 8, h: 8 },
+    { id: 'path3', x: 596, y: 716, w: 8, h: 8 },   // cluster near (75%, 60%)
+    { id: 'path4', x: 605, y: 716, w: 8, h: 8 },
+  ];
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="800" height="1200">'
+    + '<path id="path1" d="M 0,0 h 8 v 8 h -8 z"/>'
+    + '<path id="path2" d="M 0,0 h 8 v 8 h -8 z"/>'
+    + '<path id="path3" d="M 0,0 h 8 v 8 h -8 z"/>'
+    + '<path id="path4" d="M 0,0 h 8 v 8 h -8 z"/>'
+    + '</svg>';
+  const llm = fakeLLM(JSON.stringify({ dims: [
+    { value: '600', x_pct: 0.25, y_pct: 0.25 },
+    { value: '600', x_pct: 0.75, y_pct: 0.6 },
+  ] }));
+  const r = await recoverVisionDims({
+    rows, svg, pageW: 800, pageH: 1200, image: { base64: 'x', mimeType: 'image/png' }, call: llm,
+  });
+  assert.equal(r.dims.length, 2, 'both same-value dims land — distinct positions are distinct dims');
+  assert.equal(textRuns(r.svg).filter((x) => x.text === '600').length, 2, 'both clusters synthesized');
+});
+
+test('recoverVisionDims: unknown page size (0) skips the pass cleanly — no call, no garbage clusters', async () => {
+  const llm = fakeLLM(JSON.stringify({ dims: [{ value: '3200', x_pct: 0.5, y_pct: 0.25 }] }));
+  const r = await recoverVisionDims({
+    rows: vRows, svg: vSvg, pageW: 0, pageH: 1200, image: { base64: 'x', mimeType: 'image/png' }, call: llm,
+  });
+  assert.equal(r, null, 'no synthesis when positions cannot be converted to user units');
+  assert.equal(llm.calls.length, 0, 'the LLM is never called');
 });
 
 test('recoverVisionDims: never throws; a no-LLM run is a quiet no-op', async () => {
@@ -141,6 +176,38 @@ test('recoverVisionDims: never throws; a no-LLM run is a quiet no-op', async () 
   } finally {
     for (const [k, v] of Object.entries(saved)) if (v !== undefined) process.env[k] = v;
   }
+});
+
+// ---------- scaffold report: vision rejections are never silent (issue #4) ----------
+
+// reportScaffold is what BOTH the direct `node src/eval/scaffold.mjs` entry and
+// the documented `node bin/ladder.mjs scaffold` command print through — the
+// vision line must appear in both, or a hallucination rejection would be
+// silent through the documented command.
+test('reportScaffold: vision line reports recovered AND rejected dims (plausibility wording)', () => {
+  const lines = [];
+  reportScaffold({
+    id: 'vision-cat', dir: '/tmp/x', outlines: 2,
+    props: [{ id: 'dim1', mode: 'group', value: '3200' }],
+    llmFormulas: 0, geomLines: 1, preserved: 0,
+    vision: { called: true, dims: 1, rejected: 2 },
+    editor: 'preview/vision-cat-editor.html', editorMB: '1.2',
+  }, (s) => lines.push(s));
+  const visionLine = lines.find((l) => l.startsWith('  vision'));
+  assert.ok(visionLine, 'a vision line is printed');
+  assert.match(visionLine, /1 dim\(s\) recovered, 2 rejected by the plausibility check/);
+});
+
+test('reportScaffold: no vision line when the pass did not run', () => {
+  const lines = [];
+  reportScaffold({
+    id: 'trolley-slt', dir: '/tmp/y', outlines: 0,
+    props: [{ id: 'dim1', mode: 'group', value: '6650' }],
+    llmFormulas: 0, geomLines: 3, preserved: 0,
+    vision: { called: false, dims: 0, rejected: 0 },
+    editor: 'preview/trolley-slt-editor.html', editorMB: '1.1',
+  }, (s) => lines.push(s));
+  assert.ok(!lines.some((l) => l.startsWith('  vision')), 'silent when vision never ran');
 });
 
 // ---------- scaffold integration (the acceptance seam) ----------

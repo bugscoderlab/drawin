@@ -6,8 +6,8 @@
 // the outline glyph cluster nearest the converted position, and REPLACES the
 // cluster with a real <text> node (position/size from the cluster bbox), so
 // text binding and proposeGeometry run completely unchanged. A dim whose
-// px/mm fails the plausibility gate is dropped by the caller and reported —
-// never silent.
+// px/mm fails the plausibility gate (or that has no arrowed dimension line)
+// is dropped by the caller and reported — never silent.
 //
 //   const rec = await recoverVisionDims({ file, rows, svg, pageW, pageH, call });
 //   // -> { svg, dims: [{ value, x, y, id, vertical }] } | null (disabled/no dims)
@@ -27,6 +27,7 @@ const NEAR_R = 30;         // vision text centres are accurate to a few px
 const GAP = 3;             // max gap between adjacent glyphs of one number
 const SPAN_MAX = 70;       // one number's cluster stays compact
 const DIM_VALUE = /^\d{3,6}(\.\d{1,2})?$/;   // what the dim tokenizer can bind
+const DUP_POS = 10;    // px: same value within this radius is ONE dim (LLM jitter)
 
 /** Glyph-like outline paths: tiny AND not long-thin (excludes line/arrow stubs). */
 const glyphish = (r) => r.id.startsWith('path') && r.w > 0 && r.h > 0
@@ -101,7 +102,8 @@ export function synthesizeDimText(svg, cluster, value, id) {
 /**
  * Zero-dims vision recovery. One image call per scaffold; every well-formed,
  * locatable dim is synthesized into the SVG as a real <text> node. The caller
- * (scaffold) runs the px/mm plausibility gate and reports rejections.
+ * (scaffold) runs the plausibility gate (px/mm range AND a required arrowed
+ * dimension line) and reports rejections.
  *
  * `image` may be injected (tests) — otherwise the page PNG is rendered from
  * `file`. Returns { svg, dims } or null (LLM disabled, nothing proposed, or
@@ -114,6 +116,9 @@ export function synthesizeDimText(svg, cluster, value, id) {
  */
 export async function recoverVisionDims({ file, image, rows, svg, pageW, pageH, timeoutMs = 30000, call, cache } = {}) {
   if (!call && !llmConfig().hasKey) return null;
+  // Without a real page size the pct positions cannot be converted to user
+  // units — cluster lookup would run at garbage coordinates, so skip cleanly.
+  if (!(pageW > 0) || !(pageH > 0)) return null;
   const system = 'You read dimension annotations on aluminium ladder / scaffolding shop drawings.';
   const text = `This engineering drawing's dimension annotations are vector outlines (no text layer). List every dimension annotation you can see: a bare number in mm (integer or with up to 2 decimals), centred on its dimension line with arrowheads. Ignore part-number balloons/callouts, title block fields, and notes.
 Return JSON: {"dims":[{"value":<number>,"x_pct":<0-1>,"y_pct":<0-1>}, ...]} where x_pct/y_pct are the centre of the dimension TEXT, normalized to the page image (left origin, top origin).`;
@@ -129,30 +134,37 @@ Return JSON: {"dims":[{"value":<number>,"x_pct":<0-1>,"y_pct":<0-1>}, ...]} wher
       const ctrl = new AbortController();
       const t = setTimeout(() => ctrl.abort(), timeoutMs);
       const doCall = call || callLLM;
-      ({ text: reply } = await doCall({ system, text, image: image || pagePng(file), json: true, maxTokens: 2000, temperature: 0, signal: ctrl.signal }));
-      clearTimeout(t);
+      try {
+        ({ text: reply } = await doCall({ system, text, image: image || pagePng(file), json: true, maxTokens: 2000, temperature: 0, signal: ctrl.signal }));
+      } finally {
+        // a throwing call must not hold the process until the 30s timeout
+        clearTimeout(t);
+      }
       if (cache?.path) {
         try { writeFileSync(cache.path, JSON.stringify({ hash: cache.hash, reply }) + '\n'); } catch { /* cache is best-effort */ }
       }
     }
     const j = parseJSON(reply);
     const out = { svg, dims: [] };
-    const seen = new Set();
     let n = 0;
     for (const d of j?.dims || []) {
       const value = String(d?.value ?? '').replace(/,/g, '').trim();
       const xp = Number(d?.x_pct), yp = Number(d?.y_pct);
-      if (!DIM_VALUE.test(value) || seen.has(value)) continue;
+      if (!DIM_VALUE.test(value)) continue;
       if (!Number.isFinite(xp) || !Number.isFinite(yp) || xp < 0 || xp > 1 || yp < 0 || yp > 1) continue;
-      const cluster = findOutlineCluster(rows, xp * pageW, yp * pageH);
+      const x = xp * pageW, y = yp * pageH;
+      // Dedupe genuine duplicates only: same value AND near-identical position
+      // (LLM jitter). Same-value dims at distinct positions — symmetric "600"
+      // dims are common — are distinct and all must recover.
+      if (out.dims.some((p) => p.value === value && Math.hypot(p.x - x, p.y - y) <= DUP_POS)) continue;
+      const cluster = findOutlineCluster(rows, x, y);
       if (!cluster) continue;
       const synth = synthesizeDimText(out.svg, cluster, value, `vision${++n}`);
       if (!synth) continue;
-      seen.add(value);
       out.svg = synth.svg;
       out.dims.push({
         value, id: synth.id, vertical: synth.vertical,
-        x: xp * pageW, y: yp * pageH,
+        x, y,
         clusterIds: cluster.ids, bbox: cluster.bbox,
       });
     }
