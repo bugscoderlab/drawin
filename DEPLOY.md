@@ -1,5 +1,7 @@
 # Deployment
 
+**Live instance: http://187.53.132.86:8123** (single VPS, Docker Compose).
+
 Full app runs on a single Linux VPS via Docker Compose — one container
 (Node 22 + Inkscape + poppler). No domain required; reached by IP over HTTP.
 This mirrors the `shipment-tracker` hosting method.
