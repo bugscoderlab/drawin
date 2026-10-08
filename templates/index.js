@@ -269,6 +269,213 @@
     "value": "103",
     "param": "dim7",
     "mode": "group"
+   },
+   {
+    "ids": [
+     "path1445"
+    ],
+    "param": "dim1",
+    "geom": {
+     "op": "stretchX",
+     "anchor": 980
+    }
+   },
+   {
+    "ids": [
+     "path1444"
+    ],
+    "param": "dim1",
+    "geom": {
+     "op": "shiftX",
+     "anchor": 980,
+     "pxPerUnit": 0.0992
+    }
+   },
+   {
+    "ids": [
+     "text1447",
+     "text1448",
+     "text1449"
+    ],
+    "param": "dim1",
+    "geom": {
+     "op": "shiftX",
+     "anchor": 980,
+     "pxPerUnit": 0.0496
+    }
+   },
+   {
+    "ids": [
+     "path1479"
+    ],
+    "param": "dim2",
+    "geom": {
+     "op": "stretchX",
+     "anchor": 2372
+    }
+   },
+   {
+    "ids": [
+     "path1478"
+    ],
+    "param": "dim2",
+    "geom": {
+     "op": "shiftX",
+     "anchor": 2372,
+     "pxPerUnit": 0.10840767284991568
+    }
+   },
+   {
+    "ids": [
+     "text1481",
+     "text1482",
+     "text1483",
+     "text1484"
+    ],
+    "param": "dim2",
+    "geom": {
+     "op": "shiftX",
+     "anchor": 2372,
+     "pxPerUnit": 0.05420383642495784
+    }
+   },
+   {
+    "ids": [
+     "path1462"
+    ],
+    "param": "dim3",
+    "geom": {
+     "op": "stretchX",
+     "anchor": 700
+    }
+   },
+   {
+    "ids": [
+     "path1461"
+    ],
+    "param": "dim3",
+    "geom": {
+     "op": "shiftX",
+     "anchor": 700,
+     "pxPerUnit": 0.09291999999999999
+    }
+   },
+   {
+    "ids": [
+     "text1464",
+     "text1465",
+     "text1466"
+    ],
+    "param": "dim3",
+    "geom": {
+     "op": "shiftX",
+     "anchor": 700,
+     "pxPerUnit": 0.046459999999999994
+    }
+   },
+   {
+    "ids": [
+     "path1436"
+    ],
+    "param": "dim4",
+    "geom": {
+     "op": "stretchY",
+     "anchor": 2500
+    }
+   },
+   {
+    "ids": [
+     "path1435"
+    ],
+    "param": "dim4",
+    "geom": {
+     "op": "shiftY",
+     "anchor": 2500,
+     "pxPerUnit": 0.10347840000000001
+    }
+   },
+   {
+    "ids": [
+     "text1438",
+     "text1439",
+     "text1440",
+     "text1441"
+    ],
+    "param": "dim4",
+    "geom": {
+     "op": "shiftY",
+     "anchor": 2500,
+     "pxPerUnit": 0.051739200000000006
+    }
+   },
+   {
+    "ids": [
+     "path1453"
+    ],
+    "param": "dim5",
+    "geom": {
+     "op": "stretchY",
+     "anchor": 1000
+    }
+   },
+   {
+    "ids": [
+     "path1452"
+    ],
+    "param": "dim5",
+    "geom": {
+     "op": "shiftY",
+     "anchor": 1000,
+     "pxPerUnit": 0.0947227
+    }
+   },
+   {
+    "ids": [
+     "text1455",
+     "text1456",
+     "text1457",
+     "text1458"
+    ],
+    "param": "dim5",
+    "geom": {
+     "op": "shiftY",
+     "anchor": 1000,
+     "pxPerUnit": 0.04736135
+    }
+   },
+   {
+    "ids": [
+     "path1429"
+    ],
+    "param": "dim6",
+    "geom": {
+     "op": "stretchY",
+     "anchor": 305
+    }
+   },
+   {
+    "ids": [
+     "path1428"
+    ],
+    "param": "dim6",
+    "geom": {
+     "op": "shiftY",
+     "anchor": 305,
+     "pxPerUnit": 0.06141213114754098
+    }
+   },
+   {
+    "ids": [
+     "text1430",
+     "text1431",
+     "text1432"
+    ],
+    "param": "dim6",
+    "geom": {
+     "op": "shiftY",
+     "anchor": 305,
+     "pxPerUnit": 0.03070606557377049
+    }
    }
   ],
   "sample": {
@@ -346,14 +553,14 @@
     "label": "Dimension 5",
     "type": "text",
     "default": "2053.60",
-    "formula": "(dim2 * 0.308812).toFixed(2)"
+    "formula": "(dim6 * 0.383104).toFixed(2)"
    },
    {
     "id": "dim6",
     "label": "Dimension 6",
     "type": "text",
     "default": "5360.40",
-    "formula": "(dim2 + dim3 - dim5 - 136).toFixed(2)"
+    "formula": "(dim2 * 0.806075).toFixed(2)"
    }
   ],
   "bindings": [
@@ -406,6 +613,231 @@
     "value": "5360.40",
     "param": "dim6",
     "mode": "group"
+   },
+   {
+    "ids": [
+     "path1463"
+    ],
+    "param": "dim1",
+    "geom": {
+     "op": "stretchX",
+     "anchor": 500
+    }
+   },
+   {
+    "ids": [
+     "path1462"
+    ],
+    "param": "dim1",
+    "geom": {
+     "op": "shiftX",
+     "anchor": 500,
+     "pxPerUnit": 0.0799946
+    }
+   },
+   {
+    "ids": [
+     "text1465",
+     "text1466",
+     "text1467",
+     "text1468",
+     "text1469",
+     "text1470"
+    ],
+    "param": "dim1",
+    "geom": {
+     "op": "shiftX",
+     "anchor": 500,
+     "pxPerUnit": 0.0399973
+    }
+   },
+   {
+    "ids": [
+     "path1438"
+    ],
+    "param": "dim2",
+    "geom": {
+     "op": "stretchY",
+     "anchor": 6650
+    }
+   },
+   {
+    "ids": [
+     "path1437"
+    ],
+    "param": "dim2",
+    "geom": {
+     "op": "shiftY",
+     "anchor": 6650,
+     "pxPerUnit": 0.10345969924812029
+    }
+   },
+   {
+    "ids": [
+     "text1440",
+     "text1441",
+     "text1442",
+     "text1443",
+     "text1444",
+     "text1445",
+     "text1446"
+    ],
+    "param": "dim2",
+    "geom": {
+     "op": "shiftY",
+     "anchor": 6650,
+     "pxPerUnit": 0.051729849624060145
+    }
+   },
+   {
+    "ids": [
+     "path1427"
+    ],
+    "param": "dim3",
+    "geom": {
+     "op": "stretchY",
+     "anchor": 900
+    }
+   },
+   {
+    "ids": [
+     "path1426"
+    ],
+    "param": "dim3",
+    "geom": {
+     "op": "shiftY",
+     "anchor": 900,
+     "pxPerUnit": 0.08867111111111112
+    }
+   },
+   {
+    "ids": [
+     "text1429",
+     "text1430",
+     "text1431",
+     "text1432",
+     "text1433",
+     "text1434"
+    ],
+    "param": "dim3",
+    "geom": {
+     "op": "shiftY",
+     "anchor": 900,
+     "pxPerUnit": 0.04433555555555556
+    }
+   },
+   {
+    "ids": [
+     "path1452"
+    ],
+    "param": "dim4",
+    "geom": {
+     "op": "stretchY",
+     "anchor": 146
+    }
+   },
+   {
+    "ids": [
+     "text1459"
+    ],
+    "param": "dim4",
+    "geom": {
+     "op": "shiftY",
+     "anchor": 146,
+     "pxPerUnit": 0.38375342465753426
+    }
+   },
+   {
+    "ids": [
+     "text1454",
+     "text1455",
+     "text1456",
+     "text1457",
+     "text1458",
+     "text1459"
+    ],
+    "param": "dim4",
+    "geom": {
+     "op": "shiftY",
+     "anchor": 146,
+     "pxPerUnit": 0.19187671232876713
+    }
+   },
+   {
+    "ids": [
+     "path1485"
+    ],
+    "param": "dim5",
+    "geom": {
+     "op": "stretchY",
+     "anchor": 2053.6
+    }
+   },
+   {
+    "ids": [
+     "path1484"
+    ],
+    "param": "dim5",
+    "geom": {
+     "op": "shiftY",
+     "anchor": 2053.6,
+     "pxPerUnit": 0.09827814569536425
+    }
+   },
+   {
+    "ids": [
+     "text1487",
+     "text1488",
+     "text1489",
+     "text1490",
+     "text1491",
+     "text1492",
+     "text1493"
+    ],
+    "param": "dim5",
+    "geom": {
+     "op": "shiftY",
+     "anchor": 2053.6,
+     "pxPerUnit": 0.049139072847682125
+    }
+   },
+   {
+    "ids": [
+     "path1497"
+    ],
+    "param": "dim6",
+    "geom": {
+     "op": "stretchY",
+     "anchor": 5360.4
+    }
+   },
+   {
+    "ids": [
+     "path1496"
+    ],
+    "param": "dim6",
+    "geom": {
+     "op": "shiftY",
+     "anchor": 5360.4,
+     "pxPerUnit": 0.10290295500335797
+    }
+   },
+   {
+    "ids": [
+     "text1499",
+     "text1500",
+     "text1501",
+     "text1502",
+     "text1503",
+     "text1504",
+     "text1505"
+    ],
+    "param": "dim6",
+    "geom": {
+     "op": "shiftY",
+     "anchor": 5360.4,
+     "pxPerUnit": 0.051451477501678985
+    }
    }
   ],
   "sample": {
