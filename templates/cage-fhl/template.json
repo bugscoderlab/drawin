@@ -11,9 +11,9 @@
     { "id": "productName", "label": "Title", "type": "text", "default": "ALUMINIUM CAT LADDER BODY,HANDRAIL & CAGE RING TYPE" },
     { "id": "topWidth", "label": "Top width", "type": "text", "default": "500.00" },
     { "id": "ladderWidth", "label": "Ladder width", "type": "text", "default": "450.00" },
-    { "id": "cageHeight", "label": "Cage height", "type": "text", "default": "5360.40" },
+    { "id": "cageHeight", "label": "Cage height", "type": "text", "default": "5360.40", "formula": "(floorToLanding * 0.8060751879699247).toFixed(2)" },
     { "id": "floorToLanding", "label": "Floor to landing", "type": "text", "default": "6650.00" },
-    { "id": "cageStart", "label": "Cage start from floor", "type": "text", "default": "2053.60" },
+    { "id": "cageStart", "label": "Cage start from floor", "type": "text", "default": "2053.60", "formula": "(floorToLanding * 0.308812030075188).toFixed(2)" },
     { "id": "bottomRung", "label": "Bottom rung clearance", "type": "text", "default": "146.00" }
   ],
   "bindings": [

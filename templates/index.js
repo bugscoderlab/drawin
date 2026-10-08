@@ -51,7 +51,8 @@
     "id": "cageHeight",
     "label": "Cage height",
     "type": "text",
-    "default": "5360.40"
+    "default": "5360.40",
+    "formula": "(floorToLanding * 0.8060751879699247).toFixed(2)"
    },
    {
     "id": "floorToLanding",
@@ -63,7 +64,8 @@
     "id": "cageStart",
     "label": "Cage start from floor",
     "type": "text",
-    "default": "2053.60"
+    "default": "2053.60",
+    "formula": "(floorToLanding * 0.308812030075188).toFixed(2)"
    },
    {
     "id": "bottomRung",
@@ -210,12 +212,6 @@
     "label": "Dimension 7",
     "type": "text",
     "default": "103"
-   },
-   {
-    "id": "dim",
-    "label": "dim",
-    "type": "text",
-    "default": "980"
    }
   ],
   "bindings": [
@@ -272,11 +268,6 @@
    {
     "value": "103",
     "param": "dim7",
-    "mode": "group"
-   },
-   {
-    "value": "980",
-    "param": "dim",
     "mode": "group"
    }
   ],
@@ -348,7 +339,21 @@
     "id": "dim4",
     "label": "Dimension 4",
     "type": "text",
-    "default": "5360.40"
+    "default": "146.00"
+   },
+   {
+    "id": "dim5",
+    "label": "Dimension 5",
+    "type": "text",
+    "default": "2053.60",
+    "formula": "(dim2 * 0.308812).toFixed(2)"
+   },
+   {
+    "id": "dim6",
+    "label": "Dimension 6",
+    "type": "text",
+    "default": "5360.40",
+    "formula": "(dim2 + dim3 - dim5 - 136).toFixed(2)"
    }
   ],
   "bindings": [
@@ -388,8 +393,18 @@
     "mode": "group"
    },
    {
-    "value": "5360.40",
+    "value": "146.00",
     "param": "dim4",
+    "mode": "group"
+   },
+   {
+    "value": "2053.60",
+    "param": "dim5",
+    "mode": "group"
+   },
+   {
+    "value": "5360.40",
+    "param": "dim6",
     "mode": "group"
    }
   ],
@@ -401,7 +416,9 @@
    "dim1": "550.00",
    "dim2": "7315.00",
    "dim3": "990.00",
-   "dim4": "5896.44"
+   "dim4": "160.60",
+   "dim5": "2258.96",
+   "dim6": "5896.44"
   }
  },
  {

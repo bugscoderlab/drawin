@@ -11,8 +11,8 @@
   header{background:var(--navy);color:#fff;padding:14px 20px}
   header b{font-size:1.05rem}
   header span{opacity:.75;font-size:.85rem;margin-left:8px}
-  .app{display:grid;grid-template-columns:340px 1fr;min-height:calc(100vh - 52px)}
-  .panel{background:#fff;border-right:1px solid var(--line);padding:18px;overflow:auto}
+  .app{display:grid;grid-template-columns:340px 1fr;align-items:start}
+  .panel{background:#fff;border-right:1px solid var(--line);padding:18px}
   .panel h2{font-size:.8rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:16px 0 8px}
   label{display:block;font-size:.78rem;font-weight:700;color:#425466;margin:10px 0 4px}
   input[type=text],input[type=file]{width:100%;min-height:38px;border:1px solid #b9c6d1;border-radius:7px;padding:7px 9px;font:inherit}
@@ -20,7 +20,7 @@
   button{border:0;border-radius:8px;min-height:40px;padding:9px 12px;font-weight:700;cursor:pointer;width:100%;margin-top:10px}
   .primary{background:var(--orange);color:#fff}.primary:hover{background:#df6f12}
   .ghost{background:#e7edf2;color:var(--navy)}.ghost:hover{background:#dbe4eb}
-  .stage{padding:22px;overflow:auto}
+  .stage{padding:22px}
   .sheet{background:#fff;box-shadow:0 14px 40px rgba(20,45,67,.14);margin:auto;max-width:900px}
   .sheet svg{display:block;width:100%;height:auto}
   .note{background:#fff4df;border:1px solid #efcf98;color:#83520b;border-radius:9px;padding:10px 12px;font-size:.8rem;margin-bottom:16px}
@@ -58,7 +58,7 @@
   </section>
 </main>
 
-<script id="tpl" type="application/json">{"id":"lsb-2607-004-fhl-r00","name":"ALUMINIUM CAT LADDER BODY,HANDRAIL & CAGE RING TYPE","source":"LSB-2607-004-FHL-R00.pdf","match":{},"base":{"svg":"base.clean.svg"},"params":[{"id":"drawingNo","label":"Drawing No.","type":"text","default":"LSB/2607/004/FHL/R00"},{"id":"customer","label":"Customer","type":"text","default":"FHL CONSTRUCTION SDN BHD"},{"id":"workingLoad","label":"Working Load","type":"text","default":"150KG"},{"id":"productName","label":"Title","type":"text","default":"ALUMINIUM CAT LADDER BODY,HANDRAIL & CAGE RING TYPE"},{"id":"dim1","label":"Dimension 1","type":"text","default":"500.00"},{"id":"dim2","label":"Dimension 2","type":"text","default":"6650.00"},{"id":"dim3","label":"Dimension 3","type":"text","default":"900.00"},{"id":"dim4","label":"Dimension 4","type":"text","default":"5360.40"}],"bindings":[{"value":"LSB/2607/004/FHL/R00","param":"drawingNo","mode":"text"},{"value":"FHL CONSTRUCTION SDN BHD","param":"customer","mode":"text"},{"value":"150KG","param":"workingLoad","mode":"text"},{"value":"ALUMINIUM CAT LADDER BODY,HANDRAIL & CAGE RING TYPE","param":"productName","mode":"text"},{"value":"500.00","param":"dim1","mode":"group"},{"value":"6650.00","param":"dim2","mode":"group"},{"value":"900.00","param":"dim3","mode":"group"},{"value":"5360.40","param":"dim4","mode":"group"}],"sample":{"drawingNo":"LSB/2607/004/FHL/R99","customer":"ACME TOWER CRANES SDN BHD","workingLoad":"200KG","productName":"ALUMINIUM CAT LADDER BODY,HANDRAIL & CAGE RING TYPE - REV B","dim1":"550.00","dim2":"7315.00","dim3":"990.00","dim4":"5896.44"}}</script>
+<script id="tpl" type="application/json">{"id":"lsb-2607-004-fhl-r00","name":"ALUMINIUM CAT LADDER BODY,HANDRAIL & CAGE RING TYPE","source":"LSB-2607-004-FHL-R00.pdf","match":{},"base":{"svg":"base.clean.svg"},"params":[{"id":"drawingNo","label":"Drawing No.","type":"text","default":"LSB/2607/004/FHL/R00"},{"id":"customer","label":"Customer","type":"text","default":"FHL CONSTRUCTION SDN BHD"},{"id":"workingLoad","label":"Working Load","type":"text","default":"150KG"},{"id":"productName","label":"Title","type":"text","default":"ALUMINIUM CAT LADDER BODY,HANDRAIL & CAGE RING TYPE"},{"id":"dim1","label":"Dimension 1","type":"text","default":"500.00"},{"id":"dim2","label":"Dimension 2","type":"text","default":"6650.00"},{"id":"dim3","label":"Dimension 3","type":"text","default":"900.00"},{"id":"dim4","label":"Dimension 4","type":"text","default":"146.00"},{"id":"dim5","label":"Dimension 5","type":"text","default":"2053.60","formula":"(dim2 * 0.308812).toFixed(2)"},{"id":"dim6","label":"Dimension 6","type":"text","default":"5360.40","formula":"(dim2 + dim3 - dim5 - 136).toFixed(2)"}],"bindings":[{"value":"LSB/2607/004/FHL/R00","param":"drawingNo","mode":"text"},{"value":"FHL CONSTRUCTION SDN BHD","param":"customer","mode":"text"},{"value":"150KG","param":"workingLoad","mode":"text"},{"value":"ALUMINIUM CAT LADDER BODY,HANDRAIL & CAGE RING TYPE","param":"productName","mode":"text"},{"value":"500.00","param":"dim1","mode":"group"},{"value":"6650.00","param":"dim2","mode":"group"},{"value":"900.00","param":"dim3","mode":"group"},{"value":"146.00","param":"dim4","mode":"group"},{"value":"2053.60","param":"dim5","mode":"group"},{"value":"5360.40","param":"dim6","mode":"group"}],"sample":{"drawingNo":"LSB/2607/004/FHL/R99","customer":"ACME TOWER CRANES SDN BHD","workingLoad":"200KG","productName":"ALUMINIUM CAT LADDER BODY,HANDRAIL & CAGE RING TYPE - REV B","dim1":"550.00","dim2":"7315.00","dim3":"990.00","dim4":"160.60","dim5":"2258.96","dim6":"5896.44"}}</script>
 <script id="base" type="text/plain"><?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <!-- Created with Inkscape (http://www.inkscape.org/) -->
 
@@ -68,7 +68,7 @@
    width="793.76001"
    height="1122.5601"
    viewBox="0 0 793.76001 1122.5601"
-   sodipodi:docname="ladder-upload-1791397676282-LSB-2607-004-FHL-R00.pdf"
+   sodipodi:docname="ladder-upload-1791453648043-LSB-2607-004-FHL-R00.pdf"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns:xlink="http://www.w3.org/1999/xlink"

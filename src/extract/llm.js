@@ -7,22 +7,22 @@
 import { llmConfig } from '../config/env.mjs';
 
 /** One chat/turn call. `image` = { base64, mimeType } (optional). Returns { text, raw }. */
-export async function callLLM({ system, text, image, json = true, maxTokens = 3000, temperature = 0 } = {}) {
+export async function callLLM({ system, text, image, json = true, maxTokens = 3000, temperature = 0, signal } = {}) {
   const cfg = llmConfig();
   if (!cfg.hasKey) {
     throw new Error(`No API key found. Looked in: ${cfg.keyVars.join(', ')}. Add it to .env.`);
   }
   switch (cfg.provider) {
-    case 'gemini':    return callGemini(cfg, { system, text, image, json, maxTokens, temperature });
-    case 'anthropic': return callAnthropic(cfg, { system, text, image, json, maxTokens, temperature });
+    case 'gemini':    return callGemini(cfg, { system, text, image, json, maxTokens, temperature, signal });
+    case 'anthropic': return callAnthropic(cfg, { system, text, image, json, maxTokens, temperature, signal });
     case 'openai':
     case 'local':
-    default:          return callOpenAI(cfg, { system, text, image, json, maxTokens, temperature });
+    default:          return callOpenAI(cfg, { system, text, image, json, maxTokens, temperature, signal });
   }
 }
 
 // --- Gemini (native Generative Language API) --------------------------------
-async function callGemini(cfg, { system, text, image, json, maxTokens, temperature }) {
+async function callGemini(cfg, { system, text, image, json, maxTokens, temperature, signal }) {
   const parts = [];
   if (text) parts.push({ text });
   if (image) parts.push({ inline_data: { mime_type: image.mimeType, data: image.base64 } });
@@ -40,6 +40,7 @@ async function callGemini(cfg, { system, text, image, json, maxTokens, temperatu
   const url = `${cfg.baseUrl}/models/${encodeURIComponent(cfg.model)}:generateContent?key=${encodeURIComponent(cfg.apiKey)}`;
   const r = await fetch(url, {
     method: 'POST',
+    signal,
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
@@ -50,7 +51,7 @@ async function callGemini(cfg, { system, text, image, json, maxTokens, temperatu
 }
 
 // --- OpenAI-compatible (/chat/completions) ----------------------------------
-async function callOpenAI(cfg, { system, text, image, json, maxTokens, temperature }) {
+async function callOpenAI(cfg, { system, text, image, json, maxTokens, temperature, signal }) {
   const messages = [];
   if (system) messages.push({ role: 'system', content: system });
   const content = [];
@@ -63,6 +64,7 @@ async function callOpenAI(cfg, { system, text, image, json, maxTokens, temperatu
 
   const r = await fetch(`${cfg.baseUrl}/chat/completions`, {
     method: 'POST',
+    signal,
     headers: { 'content-type': 'application/json', authorization: `Bearer ${cfg.apiKey}` },
     body: JSON.stringify(body),
   });
@@ -72,7 +74,7 @@ async function callOpenAI(cfg, { system, text, image, json, maxTokens, temperatu
 }
 
 // --- Anthropic Messages API -------------------------------------------------
-async function callAnthropic(cfg, { system, text, image, json, maxTokens, temperature }) {
+async function callAnthropic(cfg, { system, text, image, json, maxTokens, temperature, signal }) {
   const content = [];
   if (text) content.push({ type: 'text', text });
   if (image) content.push({ type: 'image', source: { type: 'base64', media_type: image.mimeType, data: image.base64 } });
@@ -83,6 +85,7 @@ async function callAnthropic(cfg, { system, text, image, json, maxTokens, temper
 
   const r = await fetch(`${cfg.baseUrl}/messages`, {
     method: 'POST',
+    signal,
     headers: { 'content-type': 'application/json', 'x-api-key': cfg.apiKey, 'anthropic-version': '2023-06-01' },
     body: JSON.stringify(body),
   });

@@ -72,12 +72,6 @@
       "label": "Dimension 7",
       "type": "text",
       "default": "103"
-    },
-    {
-      "id": "dim",
-      "label": "dim",
-      "type": "text",
-      "default": "980"
     }
   ],
   "bindings": [
@@ -134,11 +128,6 @@
     {
       "value": "103",
       "param": "dim7",
-      "mode": "group"
-    },
-    {
-      "value": "980",
-      "param": "dim",
       "mode": "group"
     }
   ],

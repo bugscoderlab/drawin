@@ -28,25 +28,64 @@ function locate(runs, value) {
   return null;
 }
 
+const TB_LABEL = /customer|date|scale|drawn|checked|revision|approved|material|finish|weight|sheet|do not|quotation|name:|co\. no/i;
+
+/** Bbox of the title-block region from its label texts (padded); null when no labels found. */
+function titleBlockRect(runs) {
+  const anchors = runs.filter((r) => TB_LABEL.test(r.text));
+  if (anchors.length < 2) return null;
+  const xs = anchors.map((r) => r.x), ys = anchors.map((r) => r.y);
+  const PAD = 20;
+  return { x0: Math.min(...xs) - PAD, x1: Math.max(...xs) + PAD, y0: Math.min(...ys) - PAD, y1: Math.max(...ys) + PAD };
+}
+
+/** True when a letter run sits on the same line/column as the token — title-block rows
+ *  like "Height :6650", "Date:...2026", "Tel: ... 40150" are rejected this way. Real
+ *  dims sit in whitespace; tight spans keep nearby labels from rejecting them. */
+function inlineWithLetter(glyphs, vertical, letters) {
+  if (!glyphs.length) return false;
+  const xs = glyphs.map((g) => g.x), ys = glyphs.map((g) => g.y);
+  const cx = (Math.min(...xs) + Math.max(...xs)) / 2, cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+  for (const l of letters) {
+    if (vertical) {
+      if (Math.abs(l.x - cx) <= 15 && l.y >= Math.min(...ys) - 6 && l.y <= Math.max(...ys) + 6) return true;
+    } else {
+      // rows: letters usually trail the value ("...6650 mm", "2026)"), so trail farther
+      if (Math.abs(l.y - cy) <= 10 && l.x >= Math.min(...xs) - 12 && l.x <= Math.max(...xs) + 40) return true;
+    }
+  }
+  return false;
+}
+
 function dimensionTokens(runs, pageH) {
   const out = [], seen = new Set();
-  const TH = 12;
-  // Conservative: only the drawing area. Recall for dims that sit low on the sheet
-  // is handled by click-to-bind in the editor (widening this pulled in title-block noise).
+  const TH = 12;   // max gap along the advance axis between consecutive glyphs
+  const THX = 12;  // max drift on the fixed axis (keeps adjacent columns/rows apart)
+  const letters = runs.filter((r) => /[A-Za-z]/.test(r.text));
+  const tb = titleBlockRect(runs);
   for (const list of orderedLists(runs)) {
-    let acc = '', coord = null, firstY = 0;
+    let acc = '', coord = null, fixed = null, glyphs = [];
     const flush = () => {
-      if (acc && firstY < 0.72 * pageH && /^\d{3,6}(\.\d{1,2})?$/.test(acc) && !seen.has(acc)) { seen.add(acc); out.push(acc); }
-      acc = ''; coord = null; firstY = 0;
+      if (acc && /^\d{3,6}(\.\d{1,2})?$/.test(acc) && !seen.has(acc)) {
+        const vertical = glyphs.length && Math.abs(glyphs[0].dir.b) > Math.abs(glyphs[0].dir.a);
+        const cx = glyphs.reduce((s, g) => s + g.x, 0) / glyphs.length;
+        const cy = Math.min(...glyphs.map((g) => g.y));
+        const inTb = tb && cx >= tb.x0 && cx <= tb.x1 && cy >= tb.y0 && cy <= tb.y1;
+        if (!inTb && !inlineWithLetter(glyphs, vertical, letters)) { seen.add(acc); out.push(acc); }
+      }
+      acc = ''; coord = null; fixed = null; glyphs = [];
     };
     for (const r of list) {
       const vertical = Math.abs(r.dir.b) > Math.abs(r.dir.a);
-      const c = vertical ? r.y : r.x;
+      const c = vertical ? r.y : r.x;   // advance-axis coordinate
+      const f = vertical ? r.x : r.y;   // fixed-axis coordinate
       const numeric = /^[0-9.,]+$/.test(norm(r.text));
-      if (numeric && (coord === null || Math.abs(c - coord) <= TH)) {
-        if (coord === null) firstY = r.y;
-        acc += norm(r.text); coord = c;
-      } else { flush(); if (numeric) { acc = norm(r.text); coord = c; firstY = r.y; } }
+      if (!numeric) { flush(); continue; }
+      if (coord !== null && Math.abs(f - (fixed ?? f)) > THX) flush(); // drifted to another column/row
+      if (coord === null || Math.abs(c - coord) <= TH) {
+        if (coord === null) fixed = f;
+        acc += norm(r.text); coord = c; glyphs.push(r);
+      } else { flush(); acc = norm(r.text); coord = c; fixed = f; glyphs = [r]; }
     }
     flush();
   }
@@ -87,7 +126,7 @@ function makeSample(props) {
   return s;
 }
 
-export function scaffold(pdf, opts = {}) {
+export async function scaffold(pdf, opts = {}) {
   const file = resolve(pdf);
   if (!existsSync(file)) throw new Error(`no such file: ${file}`);
   const id = opts.id || slug(basename(file).replace(/\.pdf$/i, ''));
@@ -101,27 +140,58 @@ export function scaffold(pdf, opts = {}) {
 
   // 2. hide coincident outline duplicates (Inkscape backend only — it has the text
   //    layer that makes runs findable; pdftocairo output has no <text> to bind)
-  let outlines = 0;
+  let outlines = 0, clean = base;
   if (conv.converter === 'inkscape') {
     const rows = parseQueryAll(execFileSync(INK, ['--query-all', raw], { encoding: 'utf8', maxBuffer: 1 << 28 }));
     const dup = coincidentOutlineIds(rows);
     outlines = dup.length;
-    writeFileSync(join(dir, 'base.clean.svg'), hideIds(base, dup));
-  } else {
-    writeFileSync(join(dir, 'base.clean.svg'), base);
+    clean = hideIds(base, dup);
   }
+  writeFileSync(join(dir, 'base.clean.svg'), clean);
 
   // 3. propose bindings
   const runs = textRuns(clean);
   const pageH = Number((clean.match(/<svg[^>]*\bheight="([\d.]+)"/) || [])[1]) || Math.max(...runs.map((r) => r.y), 1);
   const props = propose(runs, pageH);
+  // Preserve hand-edits across re-scaffolds: if this template already exists, carry
+  // the manual per-param fields (formula, label) over to the newly proposed params.
+  const prevPath = join(dir, 'template.json');
+  if (existsSync(prevPath)) {
+    try {
+      const prev = JSON.parse(readFileSync(prevPath, 'utf8'));
+      const prevById = Object.fromEntries((prev.params || []).map((p) => [p.id, p]));
+      for (const p of props) {
+        // match id AND value: dim ids are positional, so the same id can be a
+        // different dimension when a re-scaffold finds new dims
+        const old = prevById[p.id];
+        if (old && String(old.default) === String(p.value)) {
+          if (old.formula) p.formula = old.formula;
+          if (old.label && old.label !== p.label) p.label = old.label;
+        }
+      }
+    } catch { /* corrupted old template — proceed without preservation */ }
+  }
+  // LLM-proposed derived formulas for the remaining numeric params (PLAN §1B):
+  // which dimensions are structurally derived from which. Manual formulas above
+  // always win; opts.llm === false skips the call (tests, offline runs).
+  let llmFormulas = 0;
+  if (opts.llm !== false && props.length >= 2) {
+    const { proposeFormulas } = await import('./formulas.mjs');
+    const proposed = await proposeFormulas(
+      props.map((p) => ({ id: p.id, label: p.label, value: p.value })),
+    );
+    for (const [id, formula] of Object.entries(proposed)) {
+      const p = props.find((x) => x.id === id);
+      if (p && !p.formula) { p.formula = formula; llmFormulas++; }
+    }
+  }
   const tpl = {
     id,
     name: props.find((p) => p.id === 'productName')?.value || basename(file),
     source: opts.sourceName || basename(file),
     match: {},
     base: { svg: 'base.clean.svg' },
-    params: props.map((p) => ({ id: p.id, label: p.label, type: 'text', default: p.value })),
+    params: props.map((p) => ({ id: p.id, label: p.label, type: 'text', default: p.value, ...(p.formula ? { formula: p.formula } : {}) })),
     bindings: props.map((p) => ({ value: p.value, param: p.id, mode: p.mode })),
     sample: makeSample(props),
   };
@@ -130,14 +200,14 @@ export function scaffold(pdf, opts = {}) {
   // 4. editor
   const ed = buildEditor(dir);
 
-  return { id, dir, outlines, props, editor: ed.out, editorMB: (ed.bytes / 1e6).toFixed(1) };
+  return { id, dir, outlines, props, llmFormulas, editor: ed.out, editorMB: (ed.bytes / 1e6).toFixed(1) };
 }
 
 if (process.argv[1] && resolve(process.argv[1]).endsWith('scaffold.mjs')) {
   const pdf = process.argv[2];
   if (!pdf) { console.error('usage: node src/eval/scaffold.mjs <file.pdf>'); process.exit(1); }
   try {
-    const r = scaffold(pdf);
+    const r = await scaffold(pdf);
     console.log(`scaffolded: ${r.id}`);
     console.log(`  folder    : ${r.dir}`);
     console.log(`  outlines  : ${r.outlines} duplicate(s) hidden`);

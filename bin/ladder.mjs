@@ -33,7 +33,7 @@ try {
     case 'scaffold': {
       if (!arg) { usage(); process.exit(1); }
       const { scaffold } = await import('../src/eval/scaffold.mjs');
-      const r = scaffold(arg);
+      const r = await scaffold(arg);
       console.log(`scaffolded: ${r.id}`);
       console.log(`  folder   : ${r.dir}`);
       console.log(`  outlines : ${r.outlines} duplicate(s) hidden`);

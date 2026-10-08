@@ -31,7 +31,6 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
  .err{background:#fff0ed;border:1px solid #e7b5ae;color:#a12417;border-radius:8px;padding:11px 12px;margin-top:12px;white-space:pre-wrap}
  table{width:100%;border-collapse:collapse} td,th{text-align:left;padding:7px 6px;border-bottom:1px solid #eef2f5;font-size:.9rem}
  a{color:var(--navy)} .pill{background:#e7f6ec;color:#1a6535;border-radius:999px;padding:1px 8px;font-size:.72rem;font-weight:700}
- iframe{width:100%;height:70vh;border:1px solid var(--line);border-radius:10px;background:#fff}
  .spin{display:inline-block;width:14px;height:14px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:s .8s linear infinite;vertical-align:-2px;margin-right:8px}
  @keyframes s{to{transform:rotate(360deg)}}
 </style></head><body>
@@ -51,7 +50,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <b id="rtitle"></b><a id="ropen" target="_blank">open in new tab ↗</a>
     </div>
     <div id="rprops" class="muted" style="margin-bottom:10px"></div>
-    <iframe id="rframe"></iframe>
+    <iframe id="rframe" style="width:100%;border:1px solid var(--line);border-radius:10px;background:#fff"></iframe>
   </div>
   <div class="card">
     <b>Existing templates</b>
@@ -81,7 +80,11 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
      document.getElementById('rtitle').textContent=j.name+'  ('+j.id+')';
      document.getElementById('ropen').href=j.editor;
      document.getElementById('rprops').textContent='proposed: '+j.props.map(p=>p.id+'='+p.value).join('  ·  ');
-     document.getElementById('rframe').src=j.editor;
+     const frame=document.getElementById('rframe');
+     let ro=null;
+     const fit=()=>{ try{ const d=frame.contentDocument; if(!d||!d.body) return; frame.style.height=(d.body.scrollHeight+24)+'px'; if(!ro&&window.ResizeObserver){ ro=new ResizeObserver(()=>{frame.style.height=(d.body.scrollHeight+24)+'px';}); ro.observe(d.body);} }catch(_){} };
+     frame.onload=()=>{ fit(); setTimeout(fit,150); setTimeout(fit,600); };
+     frame.src=j.editor;
      document.getElementById('result').style.display='block';
      loadList();
    }catch(e){ err.textContent='Error: '+e.message; err.style.display='block'; }
@@ -140,7 +143,7 @@ export function serve(port = 8123) {
         const id = slug(name.replace(/\.pdf$/i, '')) || `upload-${Date.now()}`;
         const tmp = join(tmpdir(), `ladder-upload-${Date.now()}-${name}`);
         writeFileSync(tmp, buf);
-        const r = scaffold(tmp, { id, sourceName: name });
+        const r = await scaffold(tmp, { id, sourceName: name });
         return send(res, 200, 'application/json', JSON.stringify({
           ok: true, id: r.id,
           name: r.props.find((p) => p.id === 'productName')?.value || r.id,
