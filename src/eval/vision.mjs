@@ -15,6 +15,7 @@
 // opts.call injects a fake LLM ({ system, text, image }) -> { text } (tests);
 // without a call and without a key the pass is a quiet no-op.
 
+import { readFileSync, writeFileSync } from 'node:fs';
 import { callLLM, parseJSON } from '../extract/llm.js';
 import { llmConfig } from '../config/env.mjs';
 import { hideIds } from '../templates/authoring.mjs';
@@ -105,18 +106,35 @@ export function synthesizeDimText(svg, cluster, value, id) {
  * `image` may be injected (tests) — otherwise the page PNG is rendered from
  * `file`. Returns { svg, dims } or null (LLM disabled, nothing proposed, or
  * any failure — never throws).
+ *
+ * `cache` ({ path, hash }) stores the raw LLM reply in vision.json beside the
+ * emitted template, keyed by a content hash of the source PDF (issue #5): a
+ * matching hash replays the cached reply without a new vision call; a
+ * missing/corrupt/mismatched cache degrades to a fresh call, never a failure.
  */
-export async function recoverVisionDims({ file, image, rows, svg, pageW, pageH, timeoutMs = 30000, call } = {}) {
+export async function recoverVisionDims({ file, image, rows, svg, pageW, pageH, timeoutMs = 30000, call, cache } = {}) {
   if (!call && !llmConfig().hasKey) return null;
   const system = 'You read dimension annotations on aluminium ladder / scaffolding shop drawings.';
   const text = `This engineering drawing's dimension annotations are vector outlines (no text layer). List every dimension annotation you can see: a bare number in mm (integer or with up to 2 decimals), centred on its dimension line with arrowheads. Ignore part-number balloons/callouts, title block fields, and notes.
 Return JSON: {"dims":[{"value":<number>,"x_pct":<0-1>,"y_pct":<0-1>}, ...]} where x_pct/y_pct are the centre of the dimension TEXT, normalized to the page image (left origin, top origin).`;
   try {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    const doCall = call || callLLM;
-    const { text: reply } = await doCall({ system, text, image: image || pagePng(file), json: true, maxTokens: 2000, temperature: 0, signal: ctrl.signal });
-    clearTimeout(t);
+    let reply = null;
+    if (cache?.path && cache?.hash) {
+      try {
+        const c = JSON.parse(readFileSync(cache.path, 'utf8'));
+        if (c?.hash === cache.hash && typeof c?.reply === 'string') reply = c.reply;
+      } catch { /* missing/corrupt cache -> fresh call below */ }
+    }
+    if (reply === null) {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), timeoutMs);
+      const doCall = call || callLLM;
+      ({ text: reply } = await doCall({ system, text, image: image || pagePng(file), json: true, maxTokens: 2000, temperature: 0, signal: ctrl.signal }));
+      clearTimeout(t);
+      if (cache?.path) {
+        try { writeFileSync(cache.path, JSON.stringify({ hash: cache.hash, reply }) + '\n'); } catch { /* cache is best-effort */ }
+      }
+    }
     const j = parseJSON(reply);
     const out = { svg, dims: [] };
     const seen = new Set();

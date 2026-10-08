@@ -7,6 +7,7 @@
 // Conversion is native (Inkscape/poppler), which is why this lives in the CLI.
 
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, join, basename } from 'node:path';
 import { textRuns, findRun, orderedLists } from '../templates/render.mjs';
@@ -270,7 +271,10 @@ export async function scaffold(pdf, opts = {}) {
   // plausibility gate (proposeGeometry's [0.005, 2] scale check) drops bad
   // values — rejections are reported, never silent. Trigger is zero-dims only
   // (v1); opts.llm === false disables the call, opts.llm may inject a fake
-  // (tests), and with no key the pass is a no-op (today's behavior).
+  // (tests), and with no key the pass is a no-op (today's behavior). The raw
+  // reply is cached in vision.json beside the template, keyed by a content
+  // hash of the source PDF (issue #5) — a second scaffold of the same source
+  // replays the cache instead of paying for another vision call.
   const vision = { called: false, dims: 0, rejected: 0 };
   if (conv.converter === 'inkscape' && rows.length && !props.some((p) => /^dim\d+$/.test(p.id)) && opts.llm !== false) {
     const { recoverVisionDims } = await import('./vision.mjs');
@@ -278,6 +282,10 @@ export async function scaffold(pdf, opts = {}) {
     const rec = await recoverVisionDims({
       file, rows, svg: clean, pageW, pageH,
       ...(typeof opts.llm === 'function' ? { call: opts.llm } : {}),
+      cache: {
+        path: join(dir, 'vision.json'),
+        hash: createHash('sha256').update(readFileSync(file)).digest('hex'),
+      },
     });
     if (rec) {
       vision.called = true;
