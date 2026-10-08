@@ -12,9 +12,12 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import net from 'node:net';
 import os from 'node:os';
+import { availableConverters } from '../src/convert/convert.mjs';
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
 const PDF = join(repo, 'LSB-2607-003-RHC-R00.pdf');
+// real-conversion tests skip (they run where Inkscape/poppler exist)
+const converters = availableConverters();
 
 const freePort = () => new Promise((res, rej) => {
   const s = net.createServer();
@@ -71,7 +74,7 @@ const postJson = (url, body, headers = {}) => fetch(url, {
 
 // ---------- scaffold output pinned to the server root, not the process cwd ----------
 
-test('POST /scaffold from a foreign cwd lands in the server-root templates dir', async (t) => {
+test('POST /scaffold from a foreign cwd lands in the server-root templates dir', { skip: converters.length === 0 && 'no converters installed' }, async (t) => {
   const root = tempRoot(t, 'root');       // DRAWIN_ROOT — stands in for the repo root
   const foreign = tempRoot(t, 'foreign'); // spawn cwd — must receive nothing
   const srv = await startServer({ env: { DRAWIN_ROOT: root }, cwd: foreign });
