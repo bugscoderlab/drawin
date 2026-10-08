@@ -328,6 +328,30 @@
       annotations:{readOnlyHint:false,untrustedContentHint:false},
       execute(v){if(!['cat','cage','trolley'].includes(v.productType))throw new Error('Choose cat, cage or trolley.');Object.entries(v).forEach(([k,val])=>{if($(k))$(k).value=String(val)});draw();if(v.productType==='cage' && LC.cageModel(state()).error)throw new Error(LC.cageModel(state()).error);return{productType:v.productType,overallDimensionMm:v.productType==='trolley'?n('platformHeight')+n('guardrailHeight'):v.productType==='cage'?n('cageLadderHeight')+n('cageHandrailHeight'):LC.overall(state()),status:'drawing_updated'};}
     },{signal:controller.signal})).catch(()=>{});
+    Promise.resolve(mc.registerTool({
+      name:'import_ladder_params',title:'Import extracted ladder params',description:'Apply an extract JSON (from `ladder extract`, or {template, values} from the Download params button) to the drawing. In browser-importable form only — server-side PDF extraction stays in the CLI.',
+      inputSchema:{type:'object',properties:{json:{type:'string',description:'extractParams output JSON, or {template, values}'}},required:['json'],additionalProperties:false},
+      annotations:{readOnlyHint:false,untrustedContentHint:false},
+      execute(v){
+        const data=JSON.parse(v.json);
+        const applied=[], missing=[];
+        if(data.template){ // {template, values} — Template mode
+          const tpl=templateList.find((t)=>t.id===data.template);
+          if(!tpl)throw new Error(`unknown template: ${data.template} (available: ${templateList.map((t)=>t.id).join(', ')})`);
+          $('productType').value='template';$('templateId').value=tpl.id;buildTemplateFields();
+          for(const p of tpl.params){const el=$(`tpl_${p.id}`);const val=data.values?.[p.id];if(el&&val!==undefined){el.value=String(val);applied.push(p.id);}}
+          draw();
+          return{template:tpl.id,applied,status:'drawing_updated'};
+        }
+        const mod=data.module??data.params?.productType;
+        if(!['cat','cage','trolley'].includes(mod))throw new Error('json must carry module (or params.productType)');
+        $('productType').value=mod;
+        const values=data.values??data.params??{};
+        for(const [k,val] of Object.entries(values)){if($(k)&&val!==null&&val!==undefined){$(k).value=String(val);applied.push(k);}else if(val===null||val===undefined){missing.push(k);}}
+        draw();
+        return{productType:mod,applied,missing:missing.length?missing:undefined,status:'drawing_updated'};
+      }
+    },{signal:controller.signal})).catch(()=>{});
   }
 })();
 </script>

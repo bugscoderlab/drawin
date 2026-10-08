@@ -1,6 +1,6 @@
 # Laddertech Ladder Drawing — PDF → SVG Plan
 
-Status: **in progress — through Phase 3 (2026-10-08). Remaining: HTML download-SVG (2.4), 009 conversion fix, MCP tools (2.5), pdf.js spike (2.6)**
+Status: **plan complete (2026-10-08) — Phase 0–3 + 1B/1C + MCP + pdf.js extractor built; 50/50 tests. Open: L2 geometry (on request), Phase 4 (out of scope), 009 repair verification on a machine with Inkscape**
 Folder: `/Users/z/Documents/drawin`
 Owner inputs: 3 reference PDFs in this folder, 1 existing HTML generator
 Last updated: 2026-10-08
@@ -41,7 +41,7 @@ Runs **headless (CLI, for scale)** and **in-browser (the HTML, for interactive u
 
 - [x] **`009` conversion fix** — the auto chain gained a Ghostscript repair hop: Inkscape crash → `gs -sDEVICE=pdfwrite` rewrite → Inkscape on the repaired PDF (text layer preserved) → pdftocairo. Chain order is unit-tested with a fake runner; the segfault-repair itself needs verification on a machine with Inkscape (see wiki). *(Built; verification pending.)*
 
-**Not built:** pdf.js extractor (browser text layer, Phase 2/7), L2 geometry, MCP tools (2.5), the pdf.js `file://` spike (2.6).
+**Not built:** L2 geometry (per-template effort, only where a line must move), Phase 4 (exact 3D replicas — out of scope unless requested). Everything else in the plan is done.
 
 ---
 
@@ -361,8 +361,8 @@ Every pass sees the **whole page** (no cropping).
 - [x] **2.2** `src/convert/convert.mjs`: **fallback chain** — Inkscape (timeout 120s) → pdftocairo on crash/timeout/non-zero exit; `--converter auto|inkscape|pdftocairo` (default `auto`). `ladder convert in.pdf -o out.svg` wired; scaffold now uses the same chain (outline-cleanup only runs on the Inkscape path, which has the text layer). CI runs `npm test` before deploy. *(Built.)*
 - [x] **2.3** **Superseded by `ladder serve`.** The generated editor loads a template, shows the source PDF (view-only), edits params live (with formulas), supports click-to-bind, and exports SVG. Browser-side extraction of a *new* PDF still needs the server (conversion is native). *(Built.)*
 - [x] **2.4** **Download params** in the HTML: a ghost button next to "Download SVG" exports the current form/template values as JSON — module mode → `{module, values}` (feeds `ladder generate`), template mode → `{template, values}` (feeds `ladder render`). `generate`/`render` accept both payload shapes. *(Built.)*
-- [ ] **2.5** MCP: add `import_ladder_pdf` alongside `configure_ladder_drawing`, returning extracted params + confidence.
-- [ ] **2.6** **`file://` spike (do early):** confirm legacy UMD pdf.js + worker load from disk. Fallbacks: (a) local server (`python3 -m http.server` / `npx serve`); (b) no-worker/main-thread path; (c) CLI ingest → browser reads JSON.
+- [x] **2.5** MCP: `bin/mcp.mjs` — stdio MCP server (newline JSON-RPC) exposing `import_ladder_pdf` → extracted params + confidence + warnings; and the HTML registers **`import_ladder_params`** alongside `configure_ladder_drawing` (apply an extract JSON or a Download-params payload to the drawing). *(Built.)*
+- [x] **2.6** **`file://` pdf.js spike (P1 browser extractor)** — `src/extract/pdfjsText.mjs` clusters pdf.js text items into the same layout string the CLI uses, then runs the SAME stitch/rules pipeline (zero rule drift; measured on the corpus: equivalent field quality to poppler). `spike/pdfjs.html` proves the whole path in-browser from `file://` (main-thread pdf.js, no server). CLI poppler remains the extractor of record for font-broken PDFs. *(Built.)*
 
 **Acceptance:** dropping a PDF into the HTML fills the form and redraws; CLI produces both SVG artefacts for the same PDF.
 

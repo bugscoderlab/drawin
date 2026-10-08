@@ -9,5 +9,8 @@
     "pretest": "npm run build",
     "build": "node scripts/build-core.mjs && node scripts/build-manifest.mjs",
     "probe": "node src/eval/tryExtractLLM.mjs"
+  },
+  "dependencies": {
+    "pdfjs-dist": "^6.4.299"
   }
 }

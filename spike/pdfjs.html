@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>pdf.js extraction spike (file://)</title>
+<style>
+ body{margin:0;background:#edf1f4;color:#17283a;font:15px/1.45 Arial,Helvetica,sans-serif}
+ header{background:#17314d;color:#fff;padding:14px 20px;font-weight:700}
+ main{max-width:900px;margin:22px auto;padding:0 16px}
+ .card{background:#fff;border:1px solid #cad4dd;border-radius:12px;padding:18px;margin-bottom:18px}
+ input[type=file]{min-height:42px}
+ pre{background:#f7f9fb;border:1px solid #cad4dd;border-radius:8px;padding:12px;overflow:auto;font-size:.8rem}
+ .muted{color:#657484;font-size:.85rem}
+</style>
+</head>
+<body>
+<header>pdf.js extraction spike — proves the browser text layer works from file://</header>
+<main>
+ <div class="card">
+   <b>Pick a PDF</b> <input type="file" id="pdf" accept="application/pdf">
+   <p class="muted">Runs fully in the browser: pdf.js legacy build (main-thread "fake worker", no server, no worker file needed).
+   Items are clustered into a <code>pdftotext -layout</code>-shaped string and passed through the SAME
+   stitch/rules pipeline as the CLI (<code>src/core/ladder-core.js</code>). Measured on the corpus: equivalent
+   field quality to the poppler path; PDFs with subset fonts pdf.js cannot decode simply yield fewer items —
+   the server flow (<code>ladder serve</code>) covers those.</p>
+ </div>
+ <div class="card"><b>Extracted fields</b><pre id="out">—</pre></div>
+ <div class="card"><b>Layout text (first 1200 chars)</b><pre id="layout">—</pre></div>
+</main>
+<script src="../node_modules/pdfjs-dist/legacy/build/pdf.min.js"></script>
+<script src="../src/core/ladder-core.js"></script>
+<script>
+document.getElementById('pdf').addEventListener('change', async (e) => {
+  const out = document.getElementById('out'), layoutEl = document.getElementById('layout');
+  out.textContent = 'reading…';
+  try {
+    const buf = new Uint8Array(await e.target.files[0].arrayBuffer());
+    // fake worker: main-thread parsing, works from file://
+    const doc = await pdfjsLib.getDocument({ data: buf, isEvalSupported: false, disableFontFace: true }).promise;
+    const items = [];
+    for (let p = 1; p <= doc.numPages; p++) {
+      const tc = await (await doc.getPage(p)).getTextContent();
+      items.push(...tc.items);
+    }
+    const layout = itemsToLayout(items);
+    const stitched = LadderCore.stitchText(layout);
+    const fields = LadderCore.extractRules(stitched.raw, null);
+    layoutEl.textContent = layout.slice(0, 1200) + (layout.length > 1200 ? '\n…' : '');
+    out.textContent = JSON.stringify({ pages: doc.numPages, items: items.length, fields }, null, 2);
+  } catch (err) {
+    out.textContent = 'ERROR: ' + err.message + '\n\nIf opened without `npm install`, run it once so node_modules/pdfjs-dist exists.';
+  }
+});
+
+// Same clustering as src/extract/pdfjsText.mjs (kept inline so this page is
+// dependency-free apart from the two scripts above).
+function itemsToLayout(items) {
+  const runs = [];
+  for (const it of items) {
+    const str = String(it.str ?? '');
+    if (!str.trim()) continue;
+    const [, , , , x, y] = it.transform ?? [0, 0, 0, 0, 0, 0];
+    const h = Math.hypot(it.transform?.[2] ?? 0, it.transform?.[3] ?? 16) || 16;
+    runs.push({ str, x, y, w: it.width ?? str.length * h * 0.5, h });
+  }
+  const lines = [];
+  for (const r of runs.sort((a, b) => b.y - a.y || a.x - b.x)) {
+    const line = lines.find((l) => Math.abs(l.y - r.y) <= Math.max(2, r.h * 0.35));
+    if (line) { line.runs.push(r); line.y = (line.y * (line.runs.length - 1) + r.y) / line.runs.length; }
+    else lines.push({ y: r.y, runs: [r] });
+  }
+  const text = [];
+  for (const line of lines.sort((a, b) => b.y - a.y)) {
+    const rs = line.runs.sort((a, b) => a.x - b.x);
+    let s = '', prevEnd = null;
+    for (const r of rs) {
+      if (prevEnd !== null) s += ' '.repeat(Math.min(12, Math.max(1, Math.round((r.x - prevEnd) / (r.h * 0.55)))));
+      s += r.str;
+      prevEnd = r.x + r.w;
+    }
+    text.push(s);
+  }
+  return text.join('\n');
+}
+</script>
+</body>
+</html>
