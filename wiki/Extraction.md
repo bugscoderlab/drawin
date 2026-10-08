@@ -46,6 +46,18 @@ Rules alone measured **27/34 (79%)** on the corpus. What rules can't see, by des
 
 Merged (rules + one vision pass) measured **34/34 (100%)**, stable over 3 runs. Vision needs a key: `LADDER_LLM_PROVIDER` + the provider key in `.env`.
 
+## A/B scoreboard
+
+`ladder eval` scores extraction methods per field against crop-verified fixtures:
+
+```bash
+node bin/ladder.mjs eval                 # corpus summary (rules / merged)
+node bin/ladder.mjs eval --with-text     # include the LLM text mode
+node bin/ladder.mjs eval --json          # machine-readable
+```
+
+Reference measurements (corpus of 3): rules 27/34 (79%) · vision 30/34 (88%) · **merged 34/34 (100%)** — rules own labelled text, vision owns unlabelled callouts. Without an API key the scoreboard runs rules-only and says so.
+
 ## Requirements
 
 poppler (`pdftotext`, `pdftocairo` for the vision image) — in the Docker image; macOS: `brew install poppler`. LLM key optional; everything except vision-fill works without it.

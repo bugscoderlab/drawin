@@ -31,5 +31,6 @@ Push to `main` → GitHub Actions syntax-checks + tests, then SSHes to the VPS a
 
 | Commit | Page |
 |---|---|
+| `8b90102` 1B.7 scoreboard core + `ladder eval` | [Extraction](Extraction.md) |
 | `b89ac93` 1.1–1.6 extract pipeline + `ladder extract` | [Extraction](Extraction.md) |
 | `e82c73c` 2.2 convert module + `ladder convert` | [Conversion](Conversion.md) |
