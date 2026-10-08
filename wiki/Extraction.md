@@ -46,6 +46,27 @@ Rules alone measured **27/34 (79%)** on the corpus. What rules can't see, by des
 
 Merged (rules + one vision pass) measured **34/34 (100%)**, stable over 3 runs. Vision needs a key: `LADDER_LLM_PROVIDER` + the provider key in `.env`.
 
+## The full pipeline
+
+```bash
+node bin/ladder.mjs extract "LSB-2607-003-RHC-R00.pdf" -o params.json   # PDF -> params
+node bin/ladder.mjs generate params.json -o drawing.svg                 # params -> drawing
+node bin/ladder.mjs verify "LSB-2607-004-FHL-R00.pdf"                   # both, cross-checked
+```
+
+`generate` matches a template from the extracted signals (title, drawing number, dimensions) and renders the **real art** (L1) with every template param that shares an id with an extract field bound (`customer`, `drawingNo`, `floorToLanding`, …); unbound params keep template defaults. No L1 match → the L3 code model for the module.
+
+`verify` closes the loop: extract → generate → confirm **every extracted dimension appears in the generated drawing's text layer** (as a text run or a per-glyph group). Sample run on the cage PDF:
+
+```
+verify LSB-2607-004-FHL-R00.pdf: module=cage via=l1:cage-fhl — dimensions 6/6 present
+  ✓ drawingNo = LSB/2607/004/FHL/R00  (run)
+  ✓ floorToLanding = 6650  (run)
+  ✓ handrailHeight = 900  (group)
+```
+
+`--strict` exits non-zero when any dimension is missing (CI gate).
+
 ## A/B scoreboard
 
 `ladder eval` scores extraction methods per field against crop-verified fixtures:

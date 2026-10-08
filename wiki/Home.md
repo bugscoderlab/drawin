@@ -10,6 +10,8 @@ User + operator documentation for the PDF → SVG drawing pipeline.
 |---|---|
 | [`ladder convert`](Commands.md#ladder-convert) | PDF → faithful SVG (Inkscape → pdftocairo fallback) |
 | [`ladder extract`](Extraction.md) | PDF → structured params (rules + one optional vision pass) |
+| `ladder generate` | params.json → drawing (matched template, real art where possible) |
+| `ladder verify` | extract → generate → dimensions cross-check |
 | `ladder render` | Re-render a template (L1 real art / L3 code model) with new params |
 | `ladder scaffold` | Author a new template from a PDF |
 | `ladder serve` | Upload PDF → scaffold → live editor (http://localhost:8123) |
@@ -31,6 +33,7 @@ Push to `main` → GitHub Actions syntax-checks + tests, then SSHes to the VPS a
 
 | Commit | Page |
 |---|---|
+| `7704f5f` 2.1c/d generate + verify | [Extraction](Extraction.md) |
 | `8b90102` 1B.7 scoreboard core + `ladder eval` | [Extraction](Extraction.md) |
 | `b89ac93` 1.1–1.6 extract pipeline + `ladder extract` | [Extraction](Extraction.md) |
 | `e82c73c` 2.2 convert module + `ladder convert` | [Conversion](Conversion.md) |
