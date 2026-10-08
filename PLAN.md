@@ -1,6 +1,6 @@
 # Laddertech Ladder Drawing — PDF → SVG Plan
 
-Status: **in progress — template system built & proven; Phase 0 core rewire parked**
+Status: **in progress — Phase 0 core rewire DONE (2026-10-08); template system built & proven. Next: template registry (1C.1/1C.5)**
 Folder: `/Users/z/Documents/drawin`
 Owner inputs: 3 reference PDFs in this folder, 1 existing HTML generator
 Last updated: 2026-10-08
@@ -35,8 +35,9 @@ Runs **headless (CLI, for scale)** and **in-browser (the HTML, for interactive u
 - **Click-to-bind (id-anchored)** — click any text/number in the editor to add a parameter, anchored by element id so edits don't break it; persisted via `POST /bind`.
 - **Formula layer** — params may carry `formula`; editing one value recalculates dependents (read-only, auto-updated fields).
 - **Samples** — scaffold generates a `sample` so "Sample changes" works on any upload.
+- **Phase 0 core rewire (0.7, done 2026-10-08)** — DOM-free `renderSVG(module, params)` in `src/core/` (modules/derive/text/render + assets) drives both the CLI and the HTML generator. The HTML loads a zero-dependency UMD bundle (`src/core/ladder-core.js`, built by `scripts/build-core.mjs`, classic `<script>` so `file://` works); all inline geometry was deleted from the HTML — it is now form + DOM wiring only. Snapshot tests in `test/render.snapshot.test.js` (fixtures + bundle↔ESM byte-parity) run via `npm test`.
 
-**Not built:** Phase 0 HTML rewire (0.7), P1 pdf.js extractor, L2 geometry, `ladder batch`, MCP tools, the `009` conversion fix.
+**Not built:** P1 pdf.js extractor, L2 geometry, `ladder batch`, MCP tools, the `009` conversion fix, template registry (1C.1/1C.5).
 
 ---
 
@@ -143,11 +144,12 @@ Both reproduce the drawing correctly (differences are anti-aliasing noise, no mi
     pdf.worker.min.js
   src/
     core/
-      modules.js            module registry (cat | cage | trolley)
-      derive.js             pure derived values
-      validate.js
-      render.js             renderSVG()
-      text.js               esc/fmt/text/line/dimension helpers
+      modules.mjs           module registry (cat | cage | trolley) + ranges/defaults
+      derive.mjs            pure derived values (overall, cageModel+validation)
+      text.mjs              esc/fmt/text/line/dimension helpers
+      assets.js             base64 images for the cage sheet (generated)
+      render.mjs            renderSVG(module, params) -> string
+      ladder-core.js        UMD bundle of the above (generated: npm run build)
     extract/
       pdfText.js            getTextContent() -> items with coords
       stitch.js             merge glyph runs into tokens/lines   <-- risk area
@@ -168,9 +170,10 @@ Both reproduce the drawing correctly (differences are anti-aliasing noise, no mi
   templates/                authored templates: <id>/{template.json, base.svg}
   bin/
     ladder.mjs              CLI entry
+  scripts/
+    build-core.mjs          ESM core -> UMD bundle (zero deps)
   test/
-    render.snapshot.test.js
-    extract.test.js
+    render.snapshot.test.js  fixtures + bundle↔ESM parity
     fixtures/
 ```
 
@@ -227,17 +230,17 @@ Bindings today: `{"value": "…", "param": "…", "mode": "text"|"group"}` (anch
 
 ## 5. Phases and steps
 
-### Phase 0 — Extract the core (no visual change)  ← start here
+### Phase 0 — Extract the core (no visual change)  ✅ done 2026-10-08
 
-- [ ] **0.1** `npm init`, ESM, `node:test` (or vitest). Node 22 already present.
-- [ ] **0.2** Create `src/core/modules.js`: field id, label, type, min/max, default, derived text per module. Single source of truth (today duplicated between the HTML defaults and the MCP `inputSchema`).
-- [ ] **0.3** Move helpers (`esc`, `fmt`, `n`, `text`, `line`, `dimensionX/Y`) to `src/core/text.js`.
-- [ ] **0.4** Move `drawCat` / `drawTrolley` / `drawCage` into `src/core/render.js` as `renderCat/renderTrolley/renderCage(params)`; replace `$('id').value` reads with `params[id]`; **return** the SVG string instead of assigning `innerHTML`.
-- [ ] **0.5** Create `src/core/derive.js` (`overall(params)`, `cageModel(params)`) and `src/core/validate.js`.
-- [ ] **0.6** Snapshot tests: render each module at defaults, store fixtures. Proves the refactor is behaviour-preserving.
-- [ ] **0.7** Wire the HTML to the core (UMD note below) and confirm the on-screen drawing is unchanged.
+- [x] **0.1** `npm init`, ESM, `node:test` (or vitest). Node 22 already present.
+- [x] **0.2** Create `src/core/modules.mjs`: field id, label, type, min/max/step, default, derived text per module. Single source of truth (the HTML form markup and MCP `inputSchema` still carry labels as presentation, but params/validation/CLI all read `modules.mjs`).
+- [x] **0.3** Move helpers (`esc`, `fmt`, `n`, `text`, `line`, `dimensionX/Y`) to `src/core/text.mjs`.
+- [x] **0.4** Move `drawCat` / `drawTrolley` / `drawCage` into `src/core/render.mjs` as `renderCat/renderTrolley/renderCage(params)`; replaced `$('id').value` reads with `params[id]`; functions **return** the SVG string. HTML sets `innerHTML`.
+- [x] **0.5** Create `src/core/derive.mjs` (`overall(params)`, `cageModel(params)` incl. validation) and `src/core/validate.js` (folded into `modules.mjs` `rangeError` + `derive.mjs` geometry checks).
+- [x] **0.6** Snapshot tests: `test/render.snapshot.test.js` renders each module at defaults into `test/fixtures/*.svg`; plus a bundle↔ESM byte-parity test. Proves the refactor is behaviour-preserving.
+- [x] **0.7** Wire the HTML to the core: classic `<script src="src/core/ladder-core.js">` (UMD bundle from `scripts/build-core.mjs`, zero deps, works on `file://`); ~250 lines of inline geometry deleted from the HTML.
 
-**Note on loading the core without breaking `file://`:** use a UMD-style file — a classic `<script src="src/core/render.js">` attaches `window.LadderCore` (works on `file://`), and Node 22 imports CJS from ESM. Alternative: esbuild bundle into a single self-contained HTML if a build step is acceptable. **Recommended: UMD, zero build.**
+**Note on loading the core without breaking `file://`:** done as a UMD-style bundle — `src/core/ladder-core.js` attaches `window.LadderCore`, and `scripts/build-core.mjs` regenerates it from the ESM sources (run by `npm run build` / `pretest`). No bundler, no build step beyond that one Node script.
 
 **Acceptance:** `node test/render.snapshot.test.js` passes; HTML opened from `file://` still draws correctly.
 
@@ -448,6 +451,8 @@ brew install poppler            # pdftocairo / pdftotext / pdfinfo  (DONE 2026-1
 npm install                     # pdfjs-dist, dotenv, test tooling
 
 # current
+npm test                                        # rebuild bundle + snapshot/parity tests
+npm run build                                   # regenerate src/core/ladder-core.js only
 node bin/ladder.mjs serve                       # upload → scaffold → live editor at :8123
 node bin/ladder.mjs scaffold "file.pdf"         # no server: build template + editor HTML
 node bin/ladder.mjs proof templates/<id>        # before/after render check
@@ -485,7 +490,7 @@ Available: Node 22, npm 10, Inkscape 1.4.4, Ghostscript 10.03, poppler 26.10.
 
 ## 10. Definition of done
 
-- `renderSVG(module, params)` is DOM-free and tested; HTML output unchanged.
+- `renderSVG(module, params)` is DOM-free and tested; HTML output unchanged (snapshot fixtures + bundle↔ESM parity, `npm test`).
 - The 3 reference PDFs each: (a) convert to a faithful SVG (with the fallback chain), and (b) extract to params that regenerate a correct drawing.
 - `ladder eval` shows the merged extractor at **34/34 (100%)** on the corpus (rules 79%, vision 88%).
 - Same logic runs headless and in-browser.

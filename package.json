@@ -6,6 +6,8 @@
   "description": "Parametric Laddertech ladder/trolley/cage drawing generator + PDF extraction CLI",
   "scripts": {
     "test": "node --test",
+    "pretest": "node scripts/build-core.mjs",
+    "build": "node scripts/build-core.mjs",
     "probe": "node src/eval/tryExtractLLM.mjs"
   }
 }
