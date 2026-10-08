@@ -61,6 +61,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <script>
  const fileEl=document.getElementById('file'), drop=document.getElementById('drop'), go=document.getElementById('go'), picked=document.getElementById('picked');
  let f=null;
+ let uploadToken=localStorage.getItem('drawin_upload_token')||'';
  const setFile=(x)=>{ f=x; picked.textContent=x?x.name+'  ('+(x.size/1e6).toFixed(1)+' MB)':''; go.disabled=!x; };
  drop.onclick=()=>fileEl.click();
  fileEl.onchange=()=>setFile(fileEl.files[0]);
@@ -73,8 +74,9 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
    const err=document.getElementById('err'); err.style.display='none';
    go.disabled=true; go.innerHTML='<span class="spin"></span>Scaffolding… (10–30 s)';
    try{
-     const r=await fetch('/scaffold',{method:'POST',headers:{'x-filename':f.name},body:f});
+     const r=await fetch('/scaffold',{method:'POST',headers:{'x-filename':f.name,'x-upload-token':uploadToken},body:f});
      const j=await r.json();
+     if(r.status===401 || (j.error||'').toLowerCase().includes('unauthorized')){ uploadToken=prompt('Upload token required:')||''; localStorage.setItem('drawin_upload_token',uploadToken); throw new Error('token saved — hit Scaffold again'); }
      if(!j.ok) throw new Error(j.error||'failed');
      document.getElementById('rtitle').textContent=j.name+'  ('+j.id+')';
      document.getElementById('ropen').href=j.editor;
@@ -90,6 +92,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
    document.getElementById('list').innerHTML='<tr><th>id</th><th>name</th><th></th></tr>'+t.map(x=>
      '<tr><td>'+x.id+'</td><td>'+x.name+'</td><td>'+(x.editor?'<a href="/editor/'+x.id+'" target="_blank">editor ↗</a>':'—')+'</td></tr>').join('');
  }
+ (async()=>{ try{ const c=await (await fetch('/config')).json(); if(c.tokenRequired && !uploadToken){ uploadToken=prompt('This server requires an upload token:')||''; localStorage.setItem('drawin_upload_token',uploadToken);} }catch(_){} })();
  loadList();
 </script></body></html>`;
 
@@ -125,6 +128,9 @@ export function serve(port = 8123) {
 
       if (req.method === 'GET' && url.pathname === '/templates')
         return send(res, 200, 'application/json', JSON.stringify(listTemplates()));
+
+      if (req.method === 'GET' && url.pathname === '/config')
+        return send(res, 200, 'application/json', JSON.stringify({ ok: true, tokenRequired: !!UPLOAD_TOKEN }));
 
       if (req.method === 'POST' && url.pathname === '/scaffold') {
         if (!tokenOk(req)) return send(res, 401, 'application/json', JSON.stringify({ ok: false, error: 'unauthorized (x-upload-token)' }));

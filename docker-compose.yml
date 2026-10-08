@@ -3,6 +3,8 @@
 services:
   app:
     build: .
+    environment:
+      - UPLOAD_TOKEN=${UPLOAD_TOKEN:-}   # put UPLOAD_TOKEN=<token> in the gitignored .env to require it
     ports:
       - "8123:8123"
     volumes:

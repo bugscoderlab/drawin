@@ -35,13 +35,17 @@ sources, then SSHes into the VPS, `git pull`s, and rebuilds:
 
 Repo secrets: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`.
 
-## Optional hardening
+## Optional hardening (recommended on a public IP)
 
-- Set `UPLOAD_TOKEN` (env on the container) to require the `x-upload-token`
-  header on `POST /scaffold` and `POST /bind` — recommended on a public IP,
-  since scaffolding runs Inkscape on uploaded PDFs.
-- With a domain later, front with Caddy for TLS (see the shipment-tracker
-  README's deployment notes) and set `UPLOAD_TOKEN` + a proper origin allowlist.
+Scaffolding runs Inkscape on uploaded PDFs, so a public endpoint should require a token:
+
+1. Generate a token and put it in the **gitignored** `.env` on the VPS
+   (`/root/drawin/.env`): `UPLOAD_TOKEN=<long-random-string>`
+2. Redeploy (`docker compose up -d`). Compose interpolates `.env` automatically.
+3. The upload page probes `/config`; when a token is required it prompts once
+   and remembers it in `localStorage`, sending it as the `x-upload-token` header
+   on `POST /scaffold` and `POST /bind`. Wrong/expired token → re-prompt.
+4. With a domain later, front with Caddy for TLS and keep the token.
 
 ## Runtime data
 
