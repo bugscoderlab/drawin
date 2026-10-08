@@ -13,7 +13,9 @@ import { textRuns, findRun, orderedLists } from '../templates/render.mjs';
 import { parseQueryAll, coincidentOutlineIds, hideIds } from '../templates/authoring.mjs';
 import { buildEditor } from './makeEditor.mjs';
 
-const INK = join(process.env.HOME, '.local/bin/inkscape');
+const INK = existsSync(join(process.env.HOME || '', '.local/bin/inkscape'))
+  ? join(process.env.HOME, '.local/bin/inkscape')
+  : 'inkscape';   // container/VPS: resolve via PATH
 const norm = (s) => String(s).replace(/\s+/g, '');
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
@@ -97,7 +99,9 @@ export function scaffold(pdf, opts = {}) {
     execFileSync(INK, ['--export-type=svg', `--export-filename=${raw}`, file], { stdio: 'pipe' });
   } catch (e) {
     const sig = e.signal ? ` (signal ${e.signal})` : '';
-    throw new Error(`conversion failed${sig} — Inkscape cannot convert this PDF (a known crash on some files, e.g. LSB-2609-007-FHL-R00). Text binding needs a text-preserving conversion, so this file cannot be scaffolded yet.`);
+    const why = e.code === 'ENOENT' ? 'inkscape not found on PATH'
+      : String(e.stderr || e.message || '').trim().split('\n').slice(-2).join(' ').slice(0, 200);
+    throw new Error(`conversion failed${sig} — ${why}`);
   }
   if (!existsSync(raw)) throw new Error('conversion produced no SVG');
 

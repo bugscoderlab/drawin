@@ -10,13 +10,15 @@
 //   0_COMPARE.png (if a PIL python is available)  1_BEFORE_original.pdf.png
 //   2_BEFORE_base.png  3_AFTER_changed.png/.svg
 
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { resolve, join } from 'node:path';
 import { renderTemplate } from '../templates/render.mjs';
 import { parseQueryAll, coincidentOutlineIds, hideIds } from '../templates/authoring.mjs';
 
-const INK = join(process.env.HOME, '.local/bin/inkscape');
+const INK = existsSync(join(process.env.HOME || '', '.local/bin/inkscape'))
+  ? join(process.env.HOME, '.local/bin/inkscape')
+  : 'inkscape';   // container/VPS: resolve via PATH
 const tplDir = resolve(process.argv[2] || 'templates/trolley-slt');
 const tpl = JSON.parse(readFileSync(join(tplDir, 'template.json'), 'utf8'));
 const OUT = resolve('preview', tpl.id);
