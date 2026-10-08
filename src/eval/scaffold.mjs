@@ -71,7 +71,10 @@ function dimensionTokens(runs, pageH) {
         const cx = glyphs.reduce((s, g) => s + g.x, 0) / glyphs.length;
         const cy = Math.min(...glyphs.map((g) => g.y));
         const inTb = tb && cx >= tb.x0 && cx <= tb.x1 && cy >= tb.y0 && cy <= tb.y1;
-        if (!inTb && !inlineWithLetter(glyphs, vertical, letters)) { seen.add(acc); out.push(acc); }
+        if (!inTb && !inlineWithLetter(glyphs, vertical, letters)) {
+          seen.add(acc);
+          out.push({ value: acc, vertical: !!vertical, glyphs: glyphs.map((g) => ({ id: g.id, x: g.x, y: g.y })) });
+        }
       }
       acc = ''; coord = null; fixed = null; glyphs = [];
     };
@@ -94,10 +97,10 @@ function dimensionTokens(runs, pageH) {
 
 function propose(runs, pageH) {
   const props = [], used = new Set();
-  const add = (id, label, value) => {
+  const add = (id, label, value, extra) => {
     if (!value || used.has(id) || used.has(norm(value))) return;
     const loc = locate(runs, value); if (!loc) return;
-    props.push({ id, label, value, mode: loc.mode, runs: loc.runs }); used.add(id); used.add(norm(value));
+    props.push({ id, label, value, mode: loc.mode, runs: loc.runs, ...(extra || {}) }); used.add(id); used.add(norm(value));
   };
   const texts = [...new Set(runs.map((r) => r.text.trim()).filter(Boolean))];
 
@@ -106,8 +109,91 @@ function propose(runs, pageH) {
   add('workingLoad', 'Working Load', texts.find((t) => /^\d{2,3}\s?KG$/i.test(t)));
   add('productName', 'Title', texts.filter((t) => /^[A-Z][A-Z0-9 ,&()/.-]{15,}$/.test(t)).sort((a, b) => b.length - a.length)[0]);
   let i = 0;
-  for (const d of dimensionTokens(runs, pageH)) { if (i >= 8) break; add(`dim${i + 1}`, `Dimension ${i + 1}`, d); i++; }
+  for (const d of dimensionTokens(runs, pageH)) {
+    if (i >= 8) break;
+    add(`dim${i + 1}`, `Dimension ${i + 1}`, d.value, { geom: { vertical: d.vertical, glyphs: d.glyphs } });
+    i++;
+  }
   return props;
+}
+
+/**
+ * L2 geometry proposal (PLAN 1C.7): for each numeric dim, find its dimension
+ * line in the query-all rows and emit geometry bindings so the line, its
+ * moving-end arrowhead, and the text centre all track the value.
+ *
+ * A dimension line is recognised structurally — a thin straight path with an
+ * arrowhead (small filled path) at each end that spans the dim text — so no
+ * drawing scale is assumed. px/mm is self-calibrated per dim (extent/value);
+ * shop drawings are frequently not uniformly scaled, so no cross-dim
+ * consensus is needed or wanted. Conservative: any doubt -> no binding.
+ *
+ *   proposeGeometry(rows, props, svg) -> { bindings, lines: [paramId] }
+ */
+export function proposeGeometry(rows, props, svg = '') {
+  const num = (v) => { const n = parseFloat(String(v).replace(/,/g, '')); return Number.isNaN(n) ? null : n; };
+  const cleanIds = svg ? new Set([...svg.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1])) : null;
+  const usable = rows.filter((r) => r.w > 0 && r.h > 0 && (!cleanIds || cleanIds.has(r.id)));
+  const small = usable.filter((r) => Math.max(r.w, r.h) <= 14 && Math.min(r.w, r.h) > 0);
+  const endsOf = (r, vertical) => vertical
+    ? [{ x: r.x + r.w / 2, y: r.y }, { x: r.x + r.w / 2, y: r.y + r.h }]
+    : [{ x: r.x, y: r.y + r.h / 2 }, { x: r.x + r.w, y: r.y + r.h / 2 }];
+  const arrowAt = (pt) => small
+    .filter((s) => Math.abs(s.x + s.w / 2 - pt.x) <= 7 && Math.abs(s.y + s.h / 2 - pt.y) <= 7)
+    .sort((p, q) => (Math.abs(p.x + p.w / 2 - pt.x) + Math.abs(p.y + p.h / 2 - pt.y)) - (Math.abs(q.x + q.w / 2 - pt.x) + Math.abs(q.y + q.h / 2 - pt.y)))[0];
+
+  const transformOf = (id) => {
+    const m = svg.match(new RegExp(`<[a-zA-Z][^>]*?\\bid="${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*?\\btransform="([^"]*)"`));
+    return m ? m[1] : null;
+  };
+
+  const bindings = [], lines = [];
+  const claimed = new Set();
+  for (const p of props) {
+    const g = p.geom;
+    const v = g && num(p.value);
+    if (!g || v === null || v <= 0 || !g.glyphs?.length) continue;
+    const xs = g.glyphs.map((x) => x.x), ys = g.glyphs.map((x) => x.y);
+    const vertical = g.vertical;
+    const cx = vertical ? xs.reduce((a, b) => a + b, 0) / xs.length : (Math.min(...xs) + Math.max(...xs)) / 2;
+    const cy = vertical ? (Math.min(...ys) + Math.max(...ys)) / 2 : ys.reduce((a, b) => a + b, 0) / ys.length;
+    const cands = usable.filter((r) => {
+      if (claimed.has(r.id)) return false;
+      if (vertical) {
+        return r.w <= 3 && r.h >= 12 && Math.abs(r.x + r.w / 2 - cx) <= 8 && cy >= r.y - 10 && cy <= r.y + r.h + 10;
+      }
+      return r.h <= 3 && r.w >= 12 && Math.abs(r.y + r.h / 2 - cy) <= 8 && cx >= r.x - 10 && cx <= r.x + r.w + 10;
+    });
+    const withArrows = cands.filter((r) => {
+      const ends = endsOf(r, vertical);
+      return arrowAt(ends[0]) && arrowAt(ends[1]);
+    });
+    if (!withArrows.length) continue;
+    withArrows.sort((a, b) => (vertical ? b.h - a.h : b.w - a.w));
+    const line = withArrows[0];
+    const extent = vertical ? line.h : line.w;
+    const s = extent / v;                    // px per mm, self-calibrated
+    if (s < 0.005 || s > 2) continue;        // not a believable scale -> skip
+    claimed.add(line.id);
+
+    const axis = vertical ? 'Y' : 'X';
+    const out = [{ ids: [line.id], param: p.id, geom: { op: `stretch${axis}`, anchor: v } }];
+    // The matrix translation sits on the datum (fixed) end of the line; the
+    // arrowhead at the OTHER end moves with the stretched line.
+    const m = transformOf(line.id)?.match(/matrix\(([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+)\)/);
+    if (m) {
+      const oe = +m[5], of = +m[6];
+      const ends = endsOf(line, vertical);
+      const dFix = Math.min(Math.hypot(ends[0].x - oe, ends[0].y - of), Math.hypot(ends[1].x - oe, ends[1].y - of));
+      const moving = ends.find((e) => Math.hypot(e.x - oe, e.y - of) > dFix + 1);
+      const arrow = moving && arrowAt(moving);
+      if (arrow) out.push({ ids: [arrow.id], param: p.id, geom: { op: `shift${axis}`, anchor: v, pxPerUnit: s } });
+    }
+    out.push({ ids: g.glyphs.map((x) => x.id).filter(Boolean), param: p.id, geom: { op: `shift${axis}`, anchor: v, pxPerUnit: s / 2 } });
+    bindings.push(...out);
+    lines.push(p.id);
+  }
+  return { bindings, lines };
 }
 
 /** A demo set of changed values so the "Sample changes" button works on any template. */
@@ -130,7 +216,7 @@ export async function scaffold(pdf, opts = {}) {
   const file = resolve(pdf);
   if (!existsSync(file)) throw new Error(`no such file: ${file}`);
   const id = opts.id || slug(basename(file).replace(/\.pdf$/i, ''));
-  const dir = resolve('templates', id);
+  const dir = join(resolve(opts.templatesDir || 'templates'), id);
   mkdirSync(dir, { recursive: true });
 
   // 1. convert (fallback chain: Inkscape keeps text — needed for binding)
@@ -140,9 +226,9 @@ export async function scaffold(pdf, opts = {}) {
 
   // 2. hide coincident outline duplicates (Inkscape backend only — it has the text
   //    layer that makes runs findable; pdftocairo output has no <text> to bind)
-  let outlines = 0, clean = base;
+  let outlines = 0, clean = base, rows = [];
   if (conv.converter === 'inkscape') {
-    const rows = parseQueryAll(execFileSync(INK, ['--query-all', raw], { encoding: 'utf8', maxBuffer: 1 << 28 }));
+    rows = parseQueryAll(execFileSync(INK, ['--query-all', raw], { encoding: 'utf8', maxBuffer: 1 << 28 }));
     const dup = coincidentOutlineIds(rows);
     outlines = dup.length;
     clean = hideIds(base, dup);
@@ -195,12 +281,19 @@ export async function scaffold(pdf, opts = {}) {
     bindings: props.map((p) => ({ value: p.value, param: p.id, mode: p.mode })),
     sample: makeSample(props),
   };
+  // L2 geometry: dim lines (with their arrowheads and text centres) track the value.
+  let geomLines = 0;
+  if (rows.length) {
+    const g = proposeGeometry(rows, props, clean);
+    tpl.bindings.push(...g.bindings);
+    geomLines = g.lines.length;
+  }
   writeFileSync(join(dir, 'template.json'), JSON.stringify(tpl, null, 2) + '\n');
 
   // 4. editor
   const ed = buildEditor(dir);
 
-  return { id, dir, outlines, props, llmFormulas, editor: ed.out, editorMB: (ed.bytes / 1e6).toFixed(1) };
+  return { id, dir, outlines, props, llmFormulas, geomLines, editor: ed.out, editorMB: (ed.bytes / 1e6).toFixed(1) };
 }
 
 if (process.argv[1] && resolve(process.argv[1]).endsWith('scaffold.mjs')) {
@@ -213,6 +306,7 @@ if (process.argv[1] && resolve(process.argv[1]).endsWith('scaffold.mjs')) {
     console.log(`  outlines  : ${r.outlines} duplicate(s) hidden`);
     console.log(`  proposed  : ${r.props.length} binding(s)`);
     for (const p of r.props) console.log(`     ${p.id.padEnd(12)} ${p.mode.padEnd(6)} ${JSON.stringify(p.value)}`);
+    if (r.geomLines) console.log(`  geometry  : ${r.geomLines} dimension line(s) track their value`);
     console.log(`  editor    : ${r.editor}  (${r.editorMB} MB)`);
   } catch (e) { console.error('ERROR: ' + e.message); process.exit(1); }
 }

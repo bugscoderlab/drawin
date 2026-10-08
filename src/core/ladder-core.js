@@ -451,6 +451,9 @@ function renderDocument(module, params, opts = {}) {
 
 
 
+
+
+
   const TEXT_RE = /<text\b[^>]*>[\s\S]*?<\/text>/g;
 
   function textRuns(svg) {
@@ -480,6 +483,8 @@ function renderDocument(module, params, opts = {}) {
   }
 
   const norm = (s) => String(s).replace(/\s+/g, '');
+
+
 
   /** Runs partitioned by text direction and sorted into reading order. */
   function orderedLists(runs) {
@@ -528,6 +533,7 @@ function renderDocument(module, params, opts = {}) {
     const edits = [];           // { start, end, html }
     const report = [];
     for (const b of bindings) {
+      if (b.geom) continue;     // geometry bindings run after the text edits
       const next = params[b.param];
       if (next === undefined) { report.push({ ...b, ok: false, reason: 'no value' }); continue; }
       let group = [];
@@ -546,6 +552,13 @@ function renderDocument(module, params, opts = {}) {
     edits.sort((a, b) => b.start - a.start); // apply back-to-front
     let svg = baseSvg;
     for (const e of edits) svg = svg.slice(0, e.start) + e.html + svg.slice(e.end);
+
+    const geoms = bindings.filter((b) => b.geom);
+    if (geoms.length) {
+      const g = applyGeometry(svg, geoms, params);
+      svg = g.svg;
+      report.push(...g.report);
+    }
     return { svg, report };
   }
 

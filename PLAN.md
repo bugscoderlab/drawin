@@ -1,6 +1,6 @@
 # Laddertech Ladder Drawing — PDF → SVG Plan
 
-Status: **plan complete (2026-10-08) — Phase 0–3 + 1B/1C + MCP + pdf.js extractor built; 50/50 tests. Open: L2 geometry (on request), Phase 4 (out of scope)**
+Status: **plan complete (2026-10-08) — Phase 0–3 + 1B/1C + MCP + pdf.js extractor + L2 geometry built; 57/57 tests. Open: Phase 4 (out of scope unless requested)**
 Folder: `/Users/z/Documents/drawin`
 Owner inputs: 3 reference PDFs in this folder, 1 existing HTML generator
 Last updated: 2026-10-08
@@ -41,7 +41,7 @@ Runs **headless (CLI, for scale)** and **in-browser (the HTML, for interactive u
 
 - [x] **`009` conversion fix** — the auto chain gained a Ghostscript repair hop: Inkscape crash → `gs -sDEVICE=pdfwrite` rewrite → Inkscape on the repaired PDF (text layer preserved) → pdftocairo. Chain order is unit-tested with a fake runner. *(Verified 2026-10-08 on Linux/Inkscape 1.4.3: this build does not reproduce the Mac 1.4.4 segfault — direct `inkscape` conversion of 009 succeeds and every `pdftotext` line is present in the output; the repair hop itself was exercised mechanically (`gs` rewrite → Inkscape on the repaired PDF → equivalent SVG), so both paths produce a faithful 009.)*
 
-**Not built:** L2 geometry (per-template effort, only where a line must move), Phase 4 (exact 3D replicas — out of scope unless requested). Everything else in the plan is done.
+**Not built:** Phase 4 (exact 3D replicas — out of scope unless requested). Everything else in the plan is done.
 
 ---
 
@@ -199,13 +199,14 @@ A **template** turns one example drawing into a reusable parametric one — **bi
     { "id": "footprint", "label": "Overall footprint", "type": "number", "unit": "mm", "min": 1200, "max": 5000 }
   ],
   "bindings": [
-    { "target": "#t-7",   "param": "footprint", "mode": "text" },
-    { "target": "#dim-3a","param": "footprint", "mode": "lineEndX", "ref": "#dim-3b" }
+    { "value": "2,372",  "param": "footprint", "mode": "group" },
+    { "ids": ["path1479"], "param": "footprint", "geom": { "op": "stretchX", "anchor": 2372 } },
+    { "ids": ["path1478"], "param": "footprint", "geom": { "op": "shiftX", "anchor": 2372, "pxPerUnit": 0.10821 } }
   ]
 }
 ```
 
-Bindings today: `{"value": "…", "param": "…", "mode": "text"|"group"}` (anchor by text), or `{"ids": ["text1481", …], "param": "…", "mode": "id"}` (anchor by element id — stable across edits). A param may add `"formula": "footprint * 2"` to be computed from other params.
+Bindings today: `{"value": "…", "param": "…", "mode": "text"|"group"}` (anchor by text), or `{"ids": ["text1481", …], "param": "…", "mode": "id"}` (anchor by element id — stable across edits). A param may add `"formula": "footprint * 2"` to be computed from other params. **L2 geometry bindings** (1C.7): `{"ids": ["path1479"], "param": "…", "geom": {"op": "stretchX"|"stretchY", "anchor": <value-in-art>}}` scales a dimension line's matrix about its datum end by value/anchor; `{"op": "shiftX"|"shiftY", "anchor": …, "pxPerUnit": …}` translates a far-end arrowhead (full rate) or the dim text group (half rate, re-centring). Scaffold auto-proposes these: a dimension line is recognised structurally — a thin straight path with an arrowhead at each end spanning the dim text — and px/mm is self-calibrated per dim (extent/value), so no drawing scale is assumed.
 
 **Rendering levels** (a template may mix them):
 - **L1 — text:** replace the string of bound text nodes (title block, values). Covers most fields; trivial.
@@ -344,12 +345,12 @@ Every pass sees the **whole page** (no cropping).
 ### Phase 1C — Template system (authoring + L1/L2 rendering)
 
 - [x] **1C.1** `src/templates/registry.mjs`: load `templates/*/template.json` (bad entries skipped, never fatal), match by pooled signals — +3 per title keyword, +2 drawing-no pattern, +1 per expected dimension; threshold 4 (a pattern alone must NOT match); ties prefer real-art L1 over L3 code models. Returns the winner or `null`. *(Built.)*
-- [x] **1C.2** `src/templates/render.mjs`: **L1** text binding — replace the string of bound nodes. Handles single runs, per-glyph groups, and rotated (bottom-to-top) runs; also **id-anchored bindings** (stable across edits) and **formula params**. L2 geometry modes (`lineEndX`, …) **not built**. *(Built.)*
+- [x] **1C.2** `src/templates/render.mjs`: **L1** text binding — replace the string of bound nodes. Handles single runs, per-glyph groups, and rotated (bottom-to-top) runs; also **id-anchored bindings** (stable across edits) and **formula params**. **L2 geometry binding renderer** (1C.7, built 2026-10-08): `src/templates/geometry.mjs` — `stretchX/stretchY` (scale a dimension line's matrix about its datum end by value/anchor) and `shiftX/shiftY` (translate arrowheads/text by (value−anchor)×pxPerUnit); applied after the text edits, located by element id, byte-identical in CLI and editor (ported into `editor.template.html`). *(Built.)*
 - [x] **1C.3** `src/templates/authoring.mjs`: outline-duplicate cleanup via bbox coincidence (`inkscape --query-all`); binding auto-proposal lives in `scaffold.mjs`. *(Built.)*
 - [x] **1C.4** `ladder scaffold <pdf>` — convert (Inkscape), hide outline duplicates, **auto-propose bindings** (title block + dimensions), write `templates/<id>/template.json`, and build the editor HTML. *(Built: `bin/ladder.mjs scaffold|editor|proof`.)*
 - [x] **1C.5** Registry seeded: the 4 authored `templates/` dirs load as L1, plus built-in L3 seeds (`cat-l3`/`cage-l3`/`trolley-l3`) pointing at `src/core/render` — so the corpus matches end-to-end (003 → `trolley-slt`, 004 → `cage-fhl`, 009 → `cat-l3`) and an unmatched drawing still yields `null` → layers 1–2. *(Built; no CLI surface yet — that's 1C.6.)*
 - [x] **1C.6** `ladder render <templateId> [params.json] [-o out.svg]` — renders L1 art templates (defaults apply for missing keys; binding report to stderr) and L3 code models via one code path (`src/templates/renderCmd.mjs`). The HTML generator gained **Template mode**: "Authored Template…" → pick template → edit its params → export SVG (art fetched per template; needs the folder served over http, with a clear pointer to the CLI on `file://`). Template metadata ships as `templates/index.js` (generated by `scripts/build-manifest.mjs`). *(Built.)*
-- [ ] **1C.7** Tests: author a template from one PDF, render with changed params, assert the new value appears and geometry tracks (L2). *(L1 covered by `test/render-cmd.test.js`; L2 still unbuilt.)*
+- [x] **1C.7** Tests: author a template from one PDF, render with changed params, assert the new value appears and geometry tracks (L2). *(Built 2026-10-08: `test/geometry.test.js` — `applyGeometry` units, `proposeGeometry` units on synthetic query-all rows, real-art assertion that the trolley footprint line stretches by exactly value/anchor while the datum end stays put, and a 1C.7 end-to-end that scaffolds the real trolley PDF, renders its sample, and verifies every proposed stretch binding scaled by the sample/anchor ratio.)*
 - [x] **1C.8a** LLM-proposed derived formulas on scaffold — `src/eval/formulas.mjs`: one text-only call (concise prompt, temp 0) sees the proposed numeric dims and returns which are derived from which; proposals validated numerically (whitelist `+ - * / ( )`, must reproduce the drawing's own value within 2%, `toFixed` to the target's decimals); manual formulas always win; `scaffold()` preserves hand-edits across re-scaffolds matched on **id + value** (positional dim ids shift when recall changes). *(Built 2026-10-08.)*
 - [ ] **1C.8b** **Geometry-aware formula proposal.** 1C.8a sees only `id/label/value`, so it can fit ratios but cannot infer *structural* rules — parallel dims that extend together, constant offsets, segment sums. Feed the LLM each dim's coordinates + measure axis + glyph span so it can propose parallel/offset/sum rules itself (e.g. `dim6 = dim2 + dim3 - dim5 - bracketDepth` instead of a hand-fitted `- 136`). Same numeric validation as 1C.8a; physical constants should become named params where possible. *Measured gap: on `lsb-2607-004` 1C.8a proposed `dim6 = dim2 * 0.806075`; the true rule (dim3 extends in parallel with dim6) was invisible from values alone.*
 
@@ -475,7 +476,7 @@ Available: Node 22, npm 10, Inkscape 1.4.4, Ghostscript 10.03, poppler 26.10.
 | API key leakage | Env/Keychain only; `.env` git-ignored; never in browser |
 | Generator output ≠ PDF illustration | **Resolved by templates:** L1/L2 bind the *exact* converted art; L3 (hand-model) is optional |
 | Template auto-binding proposes wrong targets | Confidence-scored proposals; human/agent confirms (step 1C.4) |
-| L2 geometry is per-template effort | Ship **L1 first** (title block + values); add L2 only where a line must actually move |
+| L2 geometry is per-template effort | Ship **L1 first** (title block + values); L2 (1C.7) binds only dimension lines structurally — thin path + arrowhead pair + self-calibrated px/mm — and is auto-proposed conservatively |
 | Rule drift between browser and CLI | Single JS ruleset shared by both |
 
 ---

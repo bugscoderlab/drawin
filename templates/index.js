@@ -498,6 +498,41 @@
     "value": "2372",
     "param": "footprint",
     "mode": "group"
+   },
+   {
+    "ids": [
+     "path1479"
+    ],
+    "param": "footprint",
+    "geom": {
+     "op": "stretchX",
+     "anchor": 2372
+    }
+   },
+   {
+    "ids": [
+     "path1478"
+    ],
+    "param": "footprint",
+    "geom": {
+     "op": "shiftX",
+     "anchor": 2372,
+     "pxPerUnit": 0.10821
+    }
+   },
+   {
+    "ids": [
+     "text1481",
+     "text1482",
+     "text1483",
+     "text1484"
+    ],
+    "param": "footprint",
+    "geom": {
+     "op": "shiftX",
+     "anchor": 2372,
+     "pxPerUnit": 0.054104
+    }
    }
   ],
   "sample": {

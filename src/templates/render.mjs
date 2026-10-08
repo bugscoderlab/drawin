@@ -1,5 +1,6 @@
-// L1 template renderer: bind, don't redraw.
-// Loads a converted SVG and replaces the text of nodes bound to parameters.
+// L1/L2 template renderer: bind, don't redraw.
+// Loads a converted SVG and replaces the text of nodes bound to parameters,
+// then applies L2 geometry bindings so dimension lines track the value.
 //
 //   renderTemplate(baseSvg, bindings, params) -> { svg, report }
 //
@@ -7,6 +8,8 @@
 //   value : the text currently in the drawing (the "anchor")
 //   param : the parameter name to substitute
 //   mode  : 'text' (single run) | 'group' (consecutive runs, e.g. per-glyph numbers)
+// A geometry binding: { ids, param, geom: { op, anchor, pxPerUnit? } } — see
+// geometry.mjs; applied after the text edits, located by element id.
 
 const TEXT_RE = /<text\b[^>]*>[\s\S]*?<\/text>/g;
 
@@ -37,6 +40,8 @@ function xy(open) {
 }
 
 const norm = (s) => String(s).replace(/\s+/g, '');
+
+import { applyGeometry } from './geometry.mjs';
 
 /** Runs partitioned by text direction and sorted into reading order. */
 export function orderedLists(runs) {
@@ -85,6 +90,7 @@ export function renderTemplate(baseSvg, bindings, params) {
   const edits = [];           // { start, end, html }
   const report = [];
   for (const b of bindings) {
+    if (b.geom) continue;     // geometry bindings run after the text edits
     const next = params[b.param];
     if (next === undefined) { report.push({ ...b, ok: false, reason: 'no value' }); continue; }
     let group = [];
@@ -103,6 +109,13 @@ export function renderTemplate(baseSvg, bindings, params) {
   edits.sort((a, b) => b.start - a.start); // apply back-to-front
   let svg = baseSvg;
   for (const e of edits) svg = svg.slice(0, e.start) + e.html + svg.slice(e.end);
+
+  const geoms = bindings.filter((b) => b.geom);
+  if (geoms.length) {
+    const g = applyGeometry(svg, geoms, params);
+    svg = g.svg;
+    report.push(...g.report);
+  }
   return { svg, report };
 }
 

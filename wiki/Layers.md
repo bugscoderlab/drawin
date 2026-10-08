@@ -13,7 +13,7 @@ An **unmatched** drawing simply stops at layers 1–2 — that is a normal, succ
 A template is **the converted example SVG + bindings** from its text/geometry to named parameters — the real Illustrator art stays; bound values get substituted.
 
 - **L1 — text:** replace bound text runs (title block, values). Covers most fields. Built.
-- **L2 — geometry:** dimension lines/parts actually move. Not built (per-template effort; only where a line must move).
+- **L2 — geometry:** dimension lines track the value, not just the text. Built (1C.7): `src/templates/geometry.mjs` — `stretchX/stretchY` scale a bound line's matrix about its datum end by value/anchor; `shiftX/shiftY` move a far-end arrowhead (full rate) or re-centre the dim text (half rate). Scaffold auto-proposes these from structure alone: a dimension line is a thin straight path with an arrowhead at each end spanning the dim text, and px/mm is self-calibrated per dim (extent/value) — no drawing scale assumed, which matters because shop art is frequently not uniformly scaled.
 - **L3 — model:** code templates emitting SVG from a world model (`cat`/`cage`/`trolley` in `src/core`).
 
 Templates live in `templates/<id>/{template.json, base.clean.svg}` and are matched by pooled signals (title keywords, drawing-no pattern, dimension signature) — see `src/templates/registry.mjs`.

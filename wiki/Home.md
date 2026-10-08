@@ -46,6 +46,7 @@ Push to `main` → GitHub Actions syntax-checks + tests, then SSHes to the VPS a
 
 | Commit | Page |
 |---|---|
+| `d586875` 009 repair verified + Inkscape font gotcha | [Conversion](Conversion.md) |
 | `ae71acc` 2.5/2.6 MCP + pdf.js extractor | [Home](Home.md) |
 | `70262de` 2.4 Download params + 009 gs-repair hop | [Commands](Commands.md), [Conversion](Conversion.md) |
 | `e8b1409` 3.1–3.3 `ladder batch` | [Commands](Commands.md) |
