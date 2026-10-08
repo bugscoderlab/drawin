@@ -196,10 +196,27 @@ export function proposeGeometry(rows, props, svg = '') {
   return { bindings, lines };
 }
 
-/** A demo set of changed values so the "Sample changes" button works on any template. */
+/** Dim geometry in LLM-facing form: measure axis, text position, glyph span. */
+function geomMeta(g) {
+  if (!g?.glyphs?.length) return null;
+  const xs = g.glyphs.map((x) => x.x), ys = g.glyphs.map((x) => x.y);
+  const step = g.glyphs.length > 1
+    ? Math.abs(g.glyphs[1].x - g.glyphs[0].x) || Math.abs(g.glyphs[1].y - g.glyphs[0].y) || 7
+    : 7;
+  const span = (g.vertical ? Math.max(...ys) - Math.min(...ys) : Math.max(...xs) - Math.min(...xs)) + step;
+  const r = (n) => Math.round(n * 10) / 10;
+  const pos = g.vertical
+    ? [r(xs.reduce((a, b) => a + b, 0) / xs.length), r((Math.min(...ys) + Math.max(...ys)) / 2)]
+    : [r((Math.min(...xs) + Math.max(...xs)) / 2), r(ys.reduce((a, b) => a + b, 0) / ys.length)];
+  return { axis: g.vertical ? 'y' : 'x', pos, spanPx: r(span) };
+}
+
+/** A demo set of changed values so the "Sample changes" button works on any template.
+ *  Constants are physical values — the demo must not move them. */
 function makeSample(props) {
   const s = {};
   for (const p of props) {
+    if (p.isConst) continue;
     const v = String(p.value);
     if (/^[0-9.,]+$/.test(v)) {
       const n = parseFloat(v.replace(/,/g, ''));
@@ -242,10 +259,11 @@ export async function scaffold(pdf, opts = {}) {
   // Preserve hand-edits across re-scaffolds: if this template already exists, carry
   // the manual per-param fields (formula, label) over to the newly proposed params.
   const prevPath = join(dir, 'template.json');
+  let prevById = {};
   if (existsSync(prevPath)) {
     try {
       const prev = JSON.parse(readFileSync(prevPath, 'utf8'));
-      const prevById = Object.fromEntries((prev.params || []).map((p) => [p.id, p]));
+      prevById = Object.fromEntries((prev.params || []).map((p) => [p.id, p]));
       for (const p of props) {
         // match id AND value: dim ids are positional, so the same id can be a
         // different dimension when a re-scaffold finds new dims
@@ -257,18 +275,38 @@ export async function scaffold(pdf, opts = {}) {
       }
     } catch { /* corrupted old template — proceed without preservation */ }
   }
-  // LLM-proposed derived formulas for the remaining numeric params (PLAN §1B):
-  // which dimensions are structurally derived from which. Manual formulas above
-  // always win; opts.llm === false skips the call (tests, offline runs).
+  // LLM-proposed derived formulas (PLAN §1B): which dimensions are structurally
+  // derived from which. Geometry-aware (1C.8b): the model also sees each dim's
+  // measure axis, text position, and glyph span, so it can propose parallel/
+  // offset/sum rules that values alone hide. Manual formulas above always win;
+  // opts.llm === false skips the call (tests, offline runs); opts.llm may be a
+  // function to inject a fake LLM (tests).
   let llmFormulas = 0;
   if (opts.llm !== false && props.length >= 2) {
     const { proposeFormulas } = await import('./formulas.mjs');
-    const proposed = await proposeFormulas(
-      props.map((p) => ({ id: p.id, label: p.label, value: p.value })),
-    );
-    for (const [id, formula] of Object.entries(proposed)) {
+    const withGeom = props.map((p) => {
+      const g = geomMeta(p.geom);
+      return { id: p.id, label: p.label, value: p.value, ...(g ? { geom: g } : {}) };
+    });
+    const proposed = await proposeFormulas(withGeom, typeof opts.llm === 'function' ? { call: opts.llm } : {});
+    for (const [id, formula] of Object.entries(proposed.formulas)) {
       const p = props.find((x) => x.id === id);
       if (p && !p.formula) { p.formula = formula; llmFormulas++; }
+    }
+    // Additive literals become named constant params — editable, not buried.
+    for (const [cid, val] of Object.entries(proposed.constants)) {
+      if (!props.some((p) => p.id === cid)) props.push({ id: cid, label: `Constant (${cid})`, value: String(val), isConst: true });
+    }
+    // Constants referenced by carried-over (preserved) formulas must survive
+    // a re-scaffold even when the LLM doesn't re-propose them.
+    const refIds = (expr) => (expr.match(/(?<![.\d])\b[a-zA-Z_]\w*\b/g) || []);
+    for (const p of props) {
+      if (!p.formula) continue;
+      for (const ref of refIds(p.formula)) {
+        if (props.some((x) => x.id === ref)) continue;
+        const old = prevById[ref];
+        if (old?.const || old?.isConst) props.push({ id: old.id, label: old.label, value: String(old.default), isConst: true });
+      }
     }
   }
   const tpl = {
@@ -277,8 +315,8 @@ export async function scaffold(pdf, opts = {}) {
     source: opts.sourceName || basename(file),
     match: {},
     base: { svg: 'base.clean.svg' },
-    params: props.map((p) => ({ id: p.id, label: p.label, type: 'text', default: p.value, ...(p.formula ? { formula: p.formula } : {}) })),
-    bindings: props.map((p) => ({ value: p.value, param: p.id, mode: p.mode })),
+    params: props.map((p) => ({ id: p.id, label: p.label, type: 'text', default: p.value, ...(p.formula ? { formula: p.formula } : {}), ...(p.isConst ? { const: true } : {}) })),
+    bindings: props.filter((p) => !p.isConst).map((p) => ({ value: p.value, param: p.id, mode: p.mode })),
     sample: makeSample(props),
   };
   // L2 geometry: dim lines (with their arrowheads and text centres) track the value.
