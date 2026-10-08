@@ -7,7 +7,8 @@
 //      still keeping a text layer (verified 2026-10-08)
 //   3. pdftocairo — always works, but outlines the text (no <text> runs)
 // `auto` (default) tries them in order. Channel A must always succeed —
-// convertPdf either returns { converter } or throws with every attempt's reason.
+// convertPdf either returns { converter, hops } or throws with every attempt's
+// reason and the same hops on error.hops.
 //
 // The backend steps live in `runner` so the chain logic is unit-testable
 // without Inkscape/Ghostscript installed.
@@ -65,25 +66,37 @@ export function availableConverters(runner = realRunner) {
 
 const outputOK = (out) => { try { return statSync(out).size > 200; } catch { return false; } };
 
+/** Render one stderr hop line, e.g. `inkscape: segfault | cairo repair: ok → used`. */
+export function formatHops(hops) {
+  return hops.map((h) => `${h.attempt}: ${h.ok ? 'ok → used' : h.reason}`).join(' | ');
+}
+
 /**
  * Convert `pdfPath` to `outSvg`.
  *   converter: 'auto' | 'inkscape' | 'pdftocairo'  (default 'auto')
  *   timeout:   per-attempt timeout ms (default 120s)
  *   runner:    backend steps (tests inject fakes)
- * Returns { converter, repaired? } naming the backend that produced outSvg.
+ * Returns { converter, repaired?, hops } naming the backend that produced outSvg
+ * and every chain attempt in order: { attempt, backend, ok, reason? }.
  */
 export function convertPdf(pdfPath, outSvg, { converter = 'auto', timeout = DEFAULT_TIMEOUT, runner = realRunner } = {}) {
   const errors = [];
-  const tryInkscape = (src, tag) => {
+  const hops = [];
+  const tryInkscape = (src, hop) => {
     runner.inkscape(src, outSvg, timeout);
     if (!outputOK(outSvg)) throw new Error('produced no/empty SVG');
-    return tag;
+    hop.ok = true;
+    return 'inkscape';
   };
+  const fail = (hop, e) => { hop.reason = hopReason(e, timeout); };
 
   if (converter === 'inkscape' || converter === 'auto') {
+    const hop = { attempt: 'inkscape', backend: 'inkscape', ok: false };
+    hops.push(hop);
     try {
-      return { converter: tryInkscape(pdfPath, 'inkscape') };
+      return { converter: tryInkscape(pdfPath, hop), hops };
     } catch (e) {
+      fail(hop, e);
       errors.push(describe('inkscape', e, timeout));
     }
   }
@@ -93,42 +106,64 @@ export function convertPdf(pdfPath, outSvg, { converter = 'auto', timeout = DEFA
     // preserving the text layer; retry Inkscape on the repaired PDF. Two
     // rewriters in order: gs (Linux-verified), then pdftocairo -pdf (the
     // macOS/Inkscape 1.4.4 cure — gs does not fix 009 there).
-    const repairHops = [['gsRepair', 'repaired'], ['cairoRepair', 'cairo-repaired']];
-    for (const [step, tag] of repairHops) {
+    const repairHops = [
+      ['gsRepair', 'repaired', 'gs repair', 'gs'],
+      ['cairoRepair', 'cairo-repaired', 'cairo repair', 'pdftocairo'],
+    ];
+    for (const [step, tag, attempt, backend] of repairHops) {
+      const hop = { attempt, backend, ok: false };
+      hops.push(hop);
       try {
         const fixed = runner[step](pdfPath, timeout);
         if (fixed) {
           try {
-            return { converter: tryInkscape(fixed, 'inkscape'), repaired: true };
+            return { converter: tryInkscape(fixed, hop), repaired: true, hops };
           } catch (e) {
+            fail(hop, e);
             errors.push(`inkscape(${tag}): ${describe('', e, timeout).trim()}`);
           }
         } else {
+          hop.reason = 'repair produced no output';
           errors.push(`${step}: repair produced no output`);
         }
       } catch (e) {
+        fail(hop, e);
         errors.push(describe(step, e, timeout));
       }
     }
   }
 
   if (converter === 'pdftocairo' || converter === 'auto') {
+    const hop = { attempt: 'pdftocairo', backend: 'pdftocairo', ok: false };
+    hops.push(hop);
     try {
       runner.pdftocairo(pdfPath, outSvg, timeout);
       if (!outputOK(outSvg)) throw new Error('produced no/empty SVG');
-      return { converter: 'pdftocairo' };
+      hop.ok = true;
+      return { converter: 'pdftocairo', hops };
     } catch (e) {
+      fail(hop, e);
       errors.push(describe('pdftocairo', e, timeout));
     }
   }
 
-  throw new Error(`conversion failed — ${errors.join(' | ')}`);
+  const err = new Error(`conversion failed — ${errors.join(' | ')}`);
+  err.hops = hops;
+  throw err;
+}
+
+function hopReason(e, timeout) {
+  const sig = e.signal ? `signal ${e.signal}${e.signal === 'SIGSEGV' ? ' — segfault' : ''}: ` : '';
+  return `${sig}${detail(e, timeout, '')}`.trim();
+}
+
+function detail(e, timeout, name) {
+  return e.code === 'ENOENT' ? `${name} not found on PATH`.trimStart()
+    : e.code === 'ETIMEDOUT' ? `timed out after ${timeout / 1000}s`
+    : lastLines(e.stderr) || e.message;
 }
 
 function describe(name, e, timeout) {
   const sig = e.signal ? ` (signal ${e.signal}${e.signal === 'SIGSEGV' ? ' — segfault' : ''})` : '';
-  const why = e.code === 'ENOENT' ? `${name} not found on PATH`
-    : e.code === 'ETIMEDOUT' ? `timed out after ${timeout / 1000}s`
-    : lastLines(e.stderr) || e.message;
-  return `${name}${sig}: ${why}`;
+  return `${name}${sig}: ${detail(e, timeout, name)}`;
 }

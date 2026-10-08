@@ -4,11 +4,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { convertPdf, availableConverters } from '../src/convert/convert.mjs';
+import { convertPdf, availableConverters, formatHops } from '../src/convert/convert.mjs';
 
 const BIG_SVG = '<svg xmlns="http://www.w3.org/2000/svg"><text x="1" y="1">ok</text>' + ' '.repeat(300) + '</svg>\n';
 
@@ -82,6 +83,77 @@ test('explicit converter skips the other backends', () => {
   const out = join(mkdtempSync(join(tmpdir(), 'conv-')), 'out.svg');
   assert.throws(() => convertPdf('in.pdf', out, { converter: 'inkscape', runner }), /conversion failed/);
   assert.deepEqual(runner.calls.map((c) => c[0]), ['inkscape']);
+});
+
+// --- per-hop reporting (issue #1) ---------------------------------------
+
+test('clean run reports a single ok hop', () => {
+  const runner = fakeRunner({});
+  const out = join(mkdtempSync(join(tmpdir(), 'conv-')), 'out.svg');
+  const r = convertPdf('in.pdf', out, { runner });
+  assert.deepEqual(r.hops, [{ attempt: 'inkscape', backend: 'inkscape', ok: true }]);
+});
+
+test('auto chain: hops recorded in order, failed hops carry the reason', () => {
+  const runner = fakeRunner({ inkscape: 'segfault', succeedOn: ['/tmp/cairo.pdf'], repaired: '/tmp/gs.pdf', cairoRepaired: '/tmp/cairo.pdf' });
+  const out = join(mkdtempSync(join(tmpdir(), 'conv-')), 'out.svg');
+  const r = convertPdf('in.pdf', out, { runner });
+  assert.deepEqual(
+    r.hops.map(({ attempt, backend, ok }) => ({ attempt, backend, ok })),
+    [
+      { attempt: 'inkscape', backend: 'inkscape', ok: false },
+      { attempt: 'gs repair', backend: 'gs', ok: false },
+      { attempt: 'cairo repair', backend: 'pdftocairo', ok: true },
+    ],
+  );
+  assert.match(r.hops[0].reason, /segfault/);
+  assert.match(r.hops[1].reason, /segfault/); // gs-repaired retry still crashed
+});
+
+test('auto chain: repair unavailable -> hop says so, not a crash', () => {
+  const runner = fakeRunner({ inkscape: 'segfault' }); // repairs return null
+  const out = join(mkdtempSync(join(tmpdir(), 'conv-')), 'out.svg');
+  const r = convertPdf('in.pdf', out, { runner });
+  assert.equal(r.converter, 'pdftocairo');
+  assert.deepEqual(
+    r.hops.map(({ attempt, ok, reason }) => ({ attempt, ok, reason: reason || null })),
+    [
+      { attempt: 'inkscape', ok: false, reason: r.hops[0].reason },
+      { attempt: 'gs repair', ok: false, reason: 'repair produced no output' },
+      { attempt: 'cairo repair', ok: false, reason: 'repair produced no output' },
+      { attempt: 'pdftocairo', ok: true, reason: null },
+    ],
+  );
+});
+
+test('multi-hop failure: throws with every attempt in order on error.hops', () => {
+  const runner = fakeRunner({ inkscape: 'fail', gsRepair: 'fail', cairoRepair: 'fail', pdftocairo: 'fail' });
+  const out = join(mkdtempSync(join(tmpdir(), 'conv-')), 'out.svg');
+  assert.throws(() => convertPdf('in.pdf', out, { runner }), (e) => {
+    assert.deepEqual(e.hops.map((h) => h.attempt), ['inkscape', 'gs repair', 'cairo repair', 'pdftocairo']);
+    assert.ok(e.hops.every((h) => h.ok === false && h.reason));
+    return /conversion failed/.test(e.message);
+  });
+});
+
+test('formatHops renders the stderr hop line', () => {
+  const runner = fakeRunner({ inkscape: 'segfault', succeedOn: ['/tmp/cairo.pdf'], repaired: '/tmp/gs.pdf', cairoRepaired: '/tmp/cairo.pdf' });
+  const out = join(mkdtempSync(join(tmpdir(), 'conv-')), 'out.svg');
+  const r = convertPdf('in.pdf', out, { runner });
+  assert.equal(
+    formatHops(r.hops),
+    'inkscape: signal SIGSEGV — segfault: crashed | gs repair: signal SIGSEGV — segfault: crashed | cairo repair: ok → used',
+  );
+});
+
+test('CLI convert prints the hop line to stderr on failure', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'conv-cli-'));
+  const out = join(dir, 'out.svg');
+  const res = spawnSync(process.execPath,
+    [join(repo, 'bin', 'ladder.mjs'), 'convert', join(dir, 'nope.pdf'), '-o', out],
+    { encoding: 'utf8' });
+  assert.equal(res.status, 1);
+  assert.match(res.stderr, /inkscape: .+ \| gs repair: .+ \| cairo repair: .+ \| pdftocairo: .+/s);
 });
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..');

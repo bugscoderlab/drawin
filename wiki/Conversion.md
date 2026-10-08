@@ -21,6 +21,10 @@ Neither is good enough alone, so `auto` (the default) tries them in order:
 
 The backend that actually produced the file is returned (`{ converter }`) so callers can adapt: e.g. scaffold only runs outline-deduplication on the Inkscape path, because pdftocairo output has no text layer to bind anyway.
 
+Every chain attempt is reported alongside the result as `hops` — `{ attempt, backend, ok, reason? }` in chain order — and the CLI prints them as one stderr line per conversion, success or failure, e.g.:
+`inkscape: segfault | gs repair: import error | cairo repair: ok → used`
+On total failure the same hops ride `error.hops`, so a multi-hop failure names every attempt in order.
+
 ## Usage
 
 ```bash
