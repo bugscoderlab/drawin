@@ -107,8 +107,8 @@ grep -c '<text' /tmp/009.svg
 ## 5. Scaffold auto-proposes geometry bindings
 
 ```bash
-rm -rf templates/lsb-2607-004-fhl-r00   # fresh scaffold
-node bin/ladder.mjs scaffold "LSB-2607-004-FHL-R00.pdf"
+node bin/ladder.mjs scaffold "LSB-2607-004-FHL-R00.pdf" --force   # fresh scaffold (wipe)
+# (re-scaffold is preserve-by-default: --force is what discards prior params/bindings)
 ```
 
 **Expect:** output includes `geometry : 6 dimension line(s) track their

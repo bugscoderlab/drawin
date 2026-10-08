@@ -35,8 +35,8 @@ Replacing vector-outline dimension text (a cluster of glyph paths, no `<text>` n
 **Unverified param** (planned):
 A param whose value came from a vision pass rather than the PDF text layer; badged in the editor and cross-checked against rules output when a conflict exists.
 
-**Preserve-by-default** (planned):
-Re-scaffold semantics: an existing template dir is merged (formulas, labels, named constants, and hand-made id-bindings whose ids still exist are kept; outlines and geometry are recomputed). Wiping requires an explicit `--force`.
+**Preserve-by-default**:
+Re-scaffold semantics (issue #3): an existing template dir is merged (formulas, labels, named constants, and hand-made id-bindings whose ids still exist are kept; outline hiding, value bindings, and geometry bindings are recomputed). Wiping requires an explicit `--force`.
 _Avoid_: Merge mode, safe scaffold
 
 **Proof**:
