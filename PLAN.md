@@ -36,8 +36,9 @@ Runs **headless (CLI, for scale)** and **in-browser (the HTML, for interactive u
 - **Formula layer** — params may carry `formula`; editing one value recalculates dependents (read-only, auto-updated fields).
 - **Samples** — scaffold generates a `sample` so "Sample changes" works on any upload.
 - **Phase 0 core rewire (0.7, done 2026-10-08)** — DOM-free `renderSVG(module, params)` in `src/core/` (modules/derive/text/render + assets) drives both the CLI and the HTML generator. The HTML loads a zero-dependency UMD bundle (`src/core/ladder-core.js`, built by `scripts/build-core.mjs`, classic `<script>` so `file://` works); all inline geometry was deleted from the HTML — it is now form + DOM wiring only. Snapshot tests in `test/render.snapshot.test.js` (fixtures + bundle↔ESM byte-parity) run via `npm test`.
+- **Template registry (1C.1/1C.5, done 2026-10-08)** — `src/templates/registry.mjs`: loads `templates/*/template.json` (bad entries skipped, never fatal) + L3 code-model seeds; signal scoring (keywords/pattern/dimensions) with a threshold that a drawing-no pattern alone cannot pass; ties prefer real art over code models. `test/registry.test.js` (7 tests) locks the corpus mappings: 003 → `trolley-slt`, 004 → `cage-fhl`, 009 → `cat-l3`, unknown → `null`.
 
-**Not built:** P1 pdf.js extractor, L2 geometry, `ladder batch`, MCP tools, the `009` conversion fix, template registry (1C.1/1C.5).
+**Not built:** P1 pdf.js extractor, L2 geometry, `ladder batch`, MCP tools, the `009` conversion fix, `ladder render` + Template mode (1C.6).
 
 ---
 
@@ -349,11 +350,11 @@ Every pass sees the **whole page** (no cropping).
 
 ### Phase 1C — Template system (authoring + L1/L2 rendering)
 
-- [ ] **1C.1** `src/templates/registry.mjs`: load `templates/*/template.json`, match by signals (title keywords, drawing-no pattern, dimension signature), return the winner or `null`.
+- [x] **1C.1** `src/templates/registry.mjs`: load `templates/*/template.json` (bad entries skipped, never fatal), match by pooled signals — +3 per title keyword, +2 drawing-no pattern, +1 per expected dimension; threshold 4 (a pattern alone must NOT match); ties prefer real-art L1 over L3 code models. Returns the winner or `null`. *(Built.)*
 - [x] **1C.2** `src/templates/render.mjs`: **L1** text binding — replace the string of bound nodes. Handles single runs, per-glyph groups, and rotated (bottom-to-top) runs; also **id-anchored bindings** (stable across edits) and **formula params**. L2 geometry modes (`lineEndX`, …) **not built**. *(Built.)*
 - [x] **1C.3** `src/templates/authoring.mjs`: outline-duplicate cleanup via bbox coincidence (`inkscape --query-all`); binding auto-proposal lives in `scaffold.mjs`. *(Built.)*
 - [x] **1C.4** `ladder scaffold <pdf>` — convert (Inkscape), hide outline duplicates, **auto-propose bindings** (title block + dimensions), write `templates/<id>/template.json`, and build the editor HTML. *(Built: `bin/ladder.mjs scaffold|editor|proof`.)*
-- [ ] **1C.5** Seed the registry with `cat`, `cage`, `trolley` — `cage`/`trolley` as **L3** (existing `core/render`) and/or **L1/L2** over their converted art.
+- [x] **1C.5** Registry seeded: the 4 authored `templates/` dirs load as L1, plus built-in L3 seeds (`cat-l3`/`cage-l3`/`trolley-l3`) pointing at `src/core/render` — so the corpus matches end-to-end (003 → `trolley-slt`, 004 → `cage-fhl`, 009 → `cat-l3`) and an unmatched drawing still yields `null` → layers 1–2. *(Built; no CLI surface yet — that's 1C.6.)*
 - [ ] **1C.6** `ladder render <template> params.json -o out.svg`; the HTML gains a **Template** mode (pick template → edit params → export).
 - [ ] **1C.7** Tests: author a template from one PDF, render with changed params, assert the new value appears and geometry tracks (L2).
 
