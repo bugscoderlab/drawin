@@ -16,7 +16,8 @@ Neither is good enough alone, so `auto` (the default) tries them in order:
 
 1. **Inkscape** — with a 120 s per-attempt timeout (it hung >300 s on one rasterize during eval).
 2. **Ghostscript repair + Inkscape** (the `009` fix) — when Inkscape crashes, `gs -sDEVICE=pdfwrite` rewrites the PDF; the rewritten file very often imports cleanly while keeping the text layer. Chain order is unit-tested with a fake runner; **verified 2026-10-08 on Linux/Inkscape 1.4.3** — that build does not reproduce the Mac 1.4.4 segfault on 009, so the repair hop was exercised mechanically: `gs` rewrite → Inkscape on the repaired PDF → equivalent SVG (all `pdftotext` lines present in both outputs).
-3. **pdftocairo** — on any remaining failure, or when the repair hop is unavailable (no `gs`).
+2b. **pdftocairo `-pdf` repair + Inkscape** — **verified 2026-10-08 on macOS/Inkscape 1.4.4 + Ghostscript 10.03**: on that toolchain the `gs` rewrite does *not* cure the 009 segfault (both importers still crash; only `-dNoOutputFonts` helped, which kills the text layer). A `pdftocairo -pdf` rewrite does cure it — Inkscape imports the rewritten PDF and keeps a real `<text>` layer (17 runs on 009, all title-block strings intact). Gotcha: `pdftocairo -pdf` does **not** append `.pdf` to the output name; pass the full filename.
+3. **pdftocairo** — on any remaining failure, or when the repair hops are unavailable (no `gs`/`pdftocairo`).
 
 The backend that actually produced the file is returned (`{ converter }`) so callers can adapt: e.g. scaffold only runs outline-deduplication on the Inkscape path, because pdftocairo output has no text layer to bind anyway.
 

@@ -52,7 +52,9 @@ console.log(`unchanged: original render === cleaned base  ->  ${before.svg === c
 console.log('bindings (after):');
 for (const r of after.report) {
   console.log('  ' + (r.ok
-    ? `OK    ${r.param.padEnd(13)} ${r.runs} run(s)   ${JSON.stringify(r.from).slice(0, 44)}  ->  ${JSON.stringify(r.to)}`
+    ? (r.ratio !== undefined
+      ? `OK    ${r.param.padEnd(13)} geom ${r.geom.op}  x${r.ratio}`
+      : `OK    ${r.param.padEnd(13)} ${r.runs} run(s)   ${JSON.stringify(r.from).slice(0, 44)}  ->  ${JSON.stringify(r.to)}`)
     : `FAIL  ${r.param.padEnd(13)} ${r.reason}`));
 }
 console.log(`\nwrote ${OUT}`);

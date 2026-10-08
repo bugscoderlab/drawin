@@ -18,8 +18,10 @@ const fakeRunner = (behaviour) => {
     calls,
     inkscape(pdf, out) {
       calls.push(['inkscape', pdf]);
-      if (behaviour.inkscape === 'segfault' && pdf !== behaviour.repaired) { const e = new Error('crashed'); e.signal = 'SIGSEGV'; throw e; }
       if (behaviour.inkscape === 'fail') throw new Error('import error');
+      if (behaviour.inkscape === 'segfault' && !(behaviour.succeedOn || []).includes(pdf)) {
+        const e = new Error('crashed'); e.signal = 'SIGSEGV'; throw e;
+      }
       writeFileSync(out, BIG_SVG);
     },
     pdftocairo(pdf, out) {
@@ -32,12 +34,17 @@ const fakeRunner = (behaviour) => {
       if (behaviour.gsRepair === 'fail') throw new Error('gs error');
       return behaviour.repaired || null;
     },
+    cairoRepair(pdf) {
+      calls.push(['cairoRepair', pdf]);
+      if (behaviour.cairoRepair === 'fail') throw new Error('cairo error');
+      return behaviour.cairoRepaired || null;
+    },
   };
   return runner;
 };
 
 test('auto chain: segfault -> gs repair -> inkscape succeeds (the 009 fix)', () => {
-  const runner = fakeRunner({ inkscape: 'segfault', repaired: '/tmp/repaired.pdf' });
+  const runner = fakeRunner({ inkscape: 'segfault', succeedOn: ['/tmp/repaired.pdf'], repaired: '/tmp/repaired.pdf' });
   const out = join(mkdtempSync(join(tmpdir(), 'conv-')), 'out.svg');
   const r = convertPdf('in.pdf', out, { runner });
   assert.equal(r.converter, 'inkscape');
@@ -46,11 +53,21 @@ test('auto chain: segfault -> gs repair -> inkscape succeeds (the 009 fix)', () 
   assert.equal(runner.calls[2][1], '/tmp/repaired.pdf');
 });
 
-test('auto chain: all hops fail -> throws naming every attempt', () => {
-  const runner = fakeRunner({ inkscape: 'fail', gsRepair: 'fail', pdftocairo: 'fail' });
+test('auto chain: gs repair does not cure it -> cairo repair -> inkscape (macOS 1.4.4)', () => {
+  const runner = fakeRunner({ inkscape: 'segfault', succeedOn: ['/tmp/cairo.pdf'], repaired: '/tmp/gs.pdf', cairoRepaired: '/tmp/cairo.pdf' });
   const out = join(mkdtempSync(join(tmpdir(), 'conv-')), 'out.svg');
-  assert.throws(() => convertPdf('in.pdf', out, { runner }), /inkscape.*gs.*pdftocairo/s);
-  assert.deepEqual(runner.calls.map((c) => c[0]), ['inkscape', 'gsRepair', 'pdftocairo']);
+  const r = convertPdf('in.pdf', out, { runner });
+  assert.equal(r.converter, 'inkscape');
+  assert.equal(r.repaired, true);
+  assert.deepEqual(runner.calls.map((c) => c[0]), ['inkscape', 'gsRepair', 'inkscape', 'cairoRepair', 'inkscape']);
+  assert.equal(runner.calls[4][1], '/tmp/cairo.pdf');
+});
+
+test('auto chain: all hops fail -> throws naming every attempt', () => {
+  const runner = fakeRunner({ inkscape: 'fail', gsRepair: 'fail', cairoRepair: 'fail', pdftocairo: 'fail' });
+  const out = join(mkdtempSync(join(tmpdir(), 'conv-')), 'out.svg');
+  assert.throws(() => convertPdf('in.pdf', out, { runner }), /inkscape.*gsRepair.*pdftocairo/s);
+  assert.deepEqual(runner.calls.map((c) => c[0]), ['inkscape', 'gsRepair', 'cairoRepair', 'pdftocairo']);
 });
 
 test('auto chain: repair unavailable -> straight to pdftocairo', () => {
@@ -100,4 +117,8 @@ test('009 segfault fallback: auto still produces an SVG', { skip: tools.length =
   const r = convertPdf(PDF_009, out); // Inkscape segfaults here on some builds
   assert.ok(existsSync(out));
   assert.ok(r.converter === 'inkscape' || r.converter === 'pdftocairo');
+  // when a repair hop delivered Inkscape, it must have kept the text layer
+  if (r.converter === 'inkscape' && r.repaired) {
+    assert.match(readFileSync(out, 'utf8'), /<text[\s>]/, 'repaired conversion keeps a text layer');
+  }
 });

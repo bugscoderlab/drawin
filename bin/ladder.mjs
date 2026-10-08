@@ -39,6 +39,7 @@ try {
       console.log(`  outlines : ${r.outlines} duplicate(s) hidden`);
       console.log(`  proposed : ${r.props.length} binding(s)`);
       for (const p of r.props) console.log(`     ${p.id.padEnd(12)} ${p.mode.padEnd(6)} ${JSON.stringify(p.value)}`);
+      if (r.geomLines) console.log(`  geometry  : ${r.geomLines} dimension line(s) track their value`);
       console.log(`  editor   : ${r.editor}  (${r.editorMB} MB)`);
       break;
     }
@@ -62,7 +63,9 @@ try {
       const pos = args.filter((a, i) => a !== '-o' && args[i - 1] !== '-o');
       const [id, paramsFile] = pos;
       if (!id) { usage(); process.exit(1); }
-      const values = paramsFile ? JSON.parse(readFileSync(paramsFile, 'utf8')) : {};
+      const values = paramsFile
+        ? (paramsFile.trim().startsWith('{') ? JSON.parse(paramsFile) : JSON.parse(readFileSync(paramsFile, 'utf8')))
+        : {};
       const { renderById } = await import('../src/templates/renderCmd.mjs');
       const r = renderById(resolve('templates'), id, values);
       if (r.error) throw new Error(r.error);
@@ -83,7 +86,7 @@ try {
       if (!pdf || !out) { usage(); process.exit(1); }
       const { convertPdf } = await import('../src/convert/convert.mjs');
       const r = convertPdf(resolve(pdf), resolve(out), { converter: conv });
-      console.error(`converted with ${r.converter} -> ${out}`);
+      console.error(`converted with ${r.converter}${r.repaired ? ' (repaired)' : ''} -> ${out}`);
       break;
     }
     case 'extract': {

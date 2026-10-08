@@ -2,6 +2,9 @@
 //   1. Inkscape  — keeps real text, smaller files, BUT segfaults on some PDFs
 //   2. gs repair + Inkscape — Ghostscript rewrite of the PDF often cures the
 //      importer crash while keeping the text layer (the `009` fix)
+//   2b. pdftocairo -pdf repair + Inkscape — on macOS/Inkscape 1.4.4 the gs
+//      rewrite does NOT cure the 009 crash, but a cairo PDF rewrite does,
+//      still keeping a text layer (verified 2026-10-08)
 //   3. pdftocairo — always works, but outlines the text (no <text> runs)
 // `auto` (default) tries them in order. Channel A must always succeed —
 // convertPdf either returns { converter } or throws with every attempt's reason.
@@ -36,6 +39,13 @@ const realRunner = {
     const fixed = join(dir, 'repaired.pdf');
     execFileSync('gs', ['-dNOPAUSE', '-dBATCH', '-sDEVICE=pdfwrite', `-sOutputFile=${fixed}`, pdf],
       { stdio: 'pipe', timeout });
+    return existsSync(fixed) && statSync(fixed).size > 500 ? fixed : null;
+  },
+  cairoRepair(pdf, timeout) {
+    const dir = mkdtempSync(join(tmpdir(), 'ladder-cairo-'));
+    // pdftocairo does NOT append .pdf to the output name — pass it explicitly
+    const fixed = join(dir, 'repaired.pdf');
+    execFileSync('pdftocairo', ['-pdf', pdf, fixed], { stdio: 'pipe', timeout });
     return existsSync(fixed) && statSync(fixed).size > 500 ? fixed : null;
   },
 };
@@ -79,21 +89,26 @@ export function convertPdf(pdfPath, outSvg, { converter = 'auto', timeout = DEFA
   }
 
   if (converter === 'auto') {
-    // The `009` fix: a Ghostscript rewrite frequently cures importer crashes
-    // while preserving the text layer; retry Inkscape on the repaired PDF.
-    try {
-      const fixed = runner.gsRepair(pdfPath, timeout);
-      if (fixed) {
-        try {
-          return { converter: tryInkscape(fixed, 'inkscape'), repaired: true };
-        } catch (e) {
-          errors.push(`inkscape(repaired): ${describe('', e, timeout).trim()}`);
+    // The `009` fix: a PDF rewrite frequently cures importer crashes while
+    // preserving the text layer; retry Inkscape on the repaired PDF. Two
+    // rewriters in order: gs (Linux-verified), then pdftocairo -pdf (the
+    // macOS/Inkscape 1.4.4 cure — gs does not fix 009 there).
+    const repairHops = [['gsRepair', 'repaired'], ['cairoRepair', 'cairo-repaired']];
+    for (const [step, tag] of repairHops) {
+      try {
+        const fixed = runner[step](pdfPath, timeout);
+        if (fixed) {
+          try {
+            return { converter: tryInkscape(fixed, 'inkscape'), repaired: true };
+          } catch (e) {
+            errors.push(`inkscape(${tag}): ${describe('', e, timeout).trim()}`);
+          }
+        } else {
+          errors.push(`${step}: repair produced no output`);
         }
-      } else {
-        errors.push('gs: repair produced no output');
+      } catch (e) {
+        errors.push(describe(step, e, timeout));
       }
-    } catch (e) {
-      errors.push(describe('gs', e, timeout));
     }
   }
 

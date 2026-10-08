@@ -94,7 +94,9 @@ export async function scoreFiles(files, { text = false, vision = true } = {}) {
     results.push({ file: basename(file), module: mod, rows });
   }
 
-  return { results, totals, key: useLlm ? `${cfg.provider}/${cfg.model} ${maskKey(cfg.apiKey)}` : null };
+  // key is reported only when an LLM pass actually ran (rules-only runs must
+  // report null even on machines that have a key configured)
+  return { results, totals, key: useLlm && (text || vision) ? `${cfg.provider}/${cfg.model} ${maskKey(cfg.apiKey)}` : null };
 }
 
 function cmp(v, want) {
