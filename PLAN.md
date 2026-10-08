@@ -265,12 +265,12 @@ Bindings today: `{"value": "…", "param": "…", "mode": "text"|"group"}` (anch
 
 Decided from the measurements below (rules 79% · vision 88% · **merged 100%**).
 
-- [ ] **1B.1** `src/extract/llm.js`: provider-agnostic adapter (OpenAI / Anthropic / Gemini / local) from env; returns structured JSON matching `modules.js`. *(Built.)*
-- [ ] **1B.2** **Vision = the full page at 200 dpi, never a crop.** Text mode is an optional cheap fallback only.
-- [ ] **1B.3** **Concise prompt.** Short system line + `Extract:` field list with one-line semantics + `Return JSON.` Do **not** add verbose instruction prose — measured: concise read the hard field 6/6, verbose 1/6. Semantics beat instructions.
-- [ ] **1B.4** **Merge policy:** rules win whenever they return a value; the single vision pass fills the blanks; validate every value against `modules.js`; flag low-confidence fields. *(Implemented in `src/eval/eval.mjs` as `merged`.)*
-- [ ] **1B.5** **Cost control:** call vision only when rules leave blanks (`--llm-whole` to force); cache by PDF hash + prompt hash.
-- [ ] **1B.6** **No second call.** A verify/re-read pass adds cost and can blank the page (measured 65%). One pass, full image.
+- [x] **1B.1** `src/extract/llm.js`: provider-agnostic adapter (OpenAI / Anthropic / Gemini / local) from env; returns structured JSON matching `modules.js`. *(Built.)*
+- [x] **1B.2** **Vision = the full page at 200 dpi, never a crop.** Text mode is an optional cheap fallback only. *(Built — `pngOf()` in `src/extract/extract.mjs`; text mode kept only for the A/B scoreboard.)*
+- [x] **1B.3** **Concise prompt.** Short system line + `Extract:` field list with one-line semantics + `Return JSON.`; no verbose prose (measured: concise 6/6, verbose 1/6). *(Built — `SYSTEM` + `promptFor()` in `src/extract/extract.mjs`, same wording as the probe.)*
+- [x] **1B.4** **Merge policy:** rules win whenever they return a value; the single vision pass fills the blanks; values typed + validated against core ranges; vision-filled fields flagged medium confidence. *(Built — `src/extract/extract.mjs`; the eval `merged` column is the same policy.)*
+- [x] **1B.5** **Cost control:** vision only when rules leave blanks (`--llm-whole` forces all fields); cache keyed by sha1(pdf + module + prompt) in `$TMPDIR/ladder-llm-cache`. *(Built — `visionFill()` in `src/extract/extract.mjs`.)*
+- [x] **1B.6** **No second call.** Exactly one vision request per uncached PDF; no verify/re-read path exists in the extractor (the 65%-collapse probe stays in `src/eval/twopass.mjs` as counter-evidence). *(Built by construction.)*
 - [x] **1B.7** `src/eval/scoreboard.mjs` (shared scoring core) + `src/eval/eval.mjs` (developer table) + `ladder eval [--with-text] [--json]`: per-field scoreboard (rules / text / vision / merged). Rules-only run reproduces the measured 27/34 (79%). *(Built.)*
 - [x] **1B.8** Ground-truth discipline: `truth.mjs` fixtures were verified against high-DPI crops (the `3210`→`3200` correction happened there); new fixtures must be crop-verified before being trusted. *(Process — enforced at authoring time.)*
 
