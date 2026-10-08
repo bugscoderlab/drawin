@@ -1,0 +1,7 @@
+# never bake secrets or VCS noise into the image
+.git
+.env
+.env.*
+node_modules
+.DS_Store
+*.log

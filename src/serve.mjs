@@ -99,6 +99,11 @@ const readBody = (req) => new Promise((res, rej) => {
 const send = (res, code, type, body) => { res.writeHead(code, { 'content-type': type }); res.end(body); };
 const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
 
+// Optional hardening for a public host: set UPLOAD_TOKEN and send it as the
+// x-upload-token header on POST /scaffold and POST /bind. Open when unset.
+const UPLOAD_TOKEN = process.env.UPLOAD_TOKEN || '';
+const tokenOk = (req) => !UPLOAD_TOKEN || req.headers['x-upload-token'] === UPLOAD_TOKEN;
+
 function listTemplates() {
   const dir = resolve('templates');
   if (!existsSync(dir)) return [];
@@ -122,6 +127,7 @@ export function serve(port = 8123) {
         return send(res, 200, 'application/json', JSON.stringify(listTemplates()));
 
       if (req.method === 'POST' && url.pathname === '/scaffold') {
+        if (!tokenOk(req)) return send(res, 401, 'application/json', JSON.stringify({ ok: false, error: 'unauthorized (x-upload-token)' }));
         const buf = await readBody(req);
         if (!buf.length) return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: 'empty upload' }));
         const name = String(req.headers['x-filename'] || 'upload.pdf').replace(/[^\w.\- ]/g, '_');
@@ -138,6 +144,7 @@ export function serve(port = 8123) {
       }
 
       if (req.method === 'POST' && url.pathname === '/bind') {
+        if (!tokenOk(req)) return send(res, 401, 'application/json', JSON.stringify({ ok: false, error: 'unauthorized (x-upload-token)' }));
         const body = JSON.parse((await readBody(req)).toString() || '{}');
         const id = slug(body.id || '');
         const tp = resolve('templates', id, 'template.json');

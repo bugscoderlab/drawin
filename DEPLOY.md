@@ -1,0 +1,49 @@
+# Deployment
+
+Full app runs on a single Linux VPS via Docker Compose — one container
+(Node 22 + Inkscape + poppler). No domain required; reached by IP over HTTP.
+This mirrors the `shipment-tracker` hosting method.
+
+## One-time VPS setup (as root)
+
+The repo is **private**, so two keys are involved:
+
+1. **VPS → GitHub (deploy key):** lets the VPS clone/pull the repo.
+   `scripts/vps-setup.sh` generates it at `~/.ssh/drawin_deploy_key` and prints
+   the public key — add it under repo **Settings → Deploy keys** (read-only).
+2. **GitHub Actions → VPS (CI key):** lets the runner SSH in to deploy.
+   Generate a keypair locally, append the public key to the VPS's
+   `~/.ssh/authorized_keys`, and store the private key as the `VPS_SSH_KEY`
+   repo secret (with `VPS_HOST`, `VPS_USER`).
+
+Then:
+
+```sh
+scp scripts/vps-setup.sh root@<vps-ip>:/root/
+ssh root@<vps-ip> bash /root/vps-setup.sh <vps-ip>
+```
+
+This clones `bugscoderlab/drawin` into `~/drawin` and runs `docker compose up -d --build`.
+
+## Every deploy after that
+
+Push to `main`. GitHub Actions (`.github/workflows/ci.yml`) syntax-checks the
+sources, then SSHes into the VPS, `git pull`s, and rebuilds:
+`docker compose up -d --build`.
+
+Repo secrets: `VPS_HOST`, `VPS_USER`, `VPS_SSH_KEY`.
+
+## Optional hardening
+
+- Set `UPLOAD_TOKEN` (env on the container) to require the `x-upload-token`
+  header on `POST /scaffold` and `POST /bind` — recommended on a public IP,
+  since scaffolding runs Inkscape on uploaded PDFs.
+- With a domain later, front with Caddy for TLS (see the shipment-tracker
+  README's deployment notes) and set `UPLOAD_TOKEN` + a proper origin allowlist.
+
+## Runtime data
+
+`templates/` and `preview/` are named volumes — scaffolded templates and
+generated editors survive redeploys. The repo copy seeds them on first boot.
+No database, no secrets on the box (scaffolding uses Inkscape only; the LLM
+key is never needed on the server).

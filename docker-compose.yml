@@ -1,0 +1,15 @@
+# drawin on a single VPS — one service, reached by IP over HTTP (no domain needed).
+# Optional hardening: set UPLOAD_TOKEN in the environment to require it on POSTs.
+services:
+  app:
+    build: .
+    ports:
+      - "8123:8123"
+    volumes:
+      - templates:/app/templates   # scaffolded/uploaded templates persist across redeploys
+      - preview:/app/preview       # generated editors persist
+    restart: unless-stopped
+
+volumes:
+  templates:
+  preview:
