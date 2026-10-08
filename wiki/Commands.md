@@ -48,6 +48,12 @@ node bin/ladder.mjs proof templates/<id>     # before/after render check
 node bin/ladder.mjs editor templates/<id>    # (re)build preview/<id>-editor.html
 ```
 
+## Download params (HTML bridge)
+
+The generator HTML has a **Download params** button (next to Download SVG). It exports the current form as JSON:
+- module modes → `{ "module": "cage", "values": { ...form fields } }` — feed to `node bin/ladder.mjs generate params.json -o out.svg`
+- Template mode → `{ "template": "trolley-slt", "values": { ... } }` — feed to `node bin/ladder.mjs render trolley-slt params.json -o out.svg`
+
 ## ladder batch
 
 ```bash

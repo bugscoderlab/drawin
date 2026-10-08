@@ -34,6 +34,7 @@ Push to `main` → GitHub Actions syntax-checks + tests, then SSHes to the VPS a
 
 | Commit | Page |
 |---|---|
+| `70262de` 2.4 Download params + 009 gs-repair hop | [Commands](Commands.md), [Conversion](Conversion.md) |
 | `e8b1409` 3.1–3.3 `ladder batch` | [Commands](Commands.md) |
 | `7704f5f` 2.1c/d generate + verify | [Extraction](Extraction.md) |
 | `8b90102` 1B.7 scoreboard core + `ladder eval` | [Extraction](Extraction.md) |

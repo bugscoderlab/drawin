@@ -15,7 +15,8 @@ Measured on the corpus (PLAN §2a):
 Neither is good enough alone, so `auto` (the default) tries them in order:
 
 1. **Inkscape** — with a 120 s per-attempt timeout (it hung >300 s on one rasterize during eval).
-2. **pdftocairo** — on any non-zero exit, crash (incl. SIGSEGV), timeout, or empty output.
+2. **Ghostscript repair + Inkscape** (the `009` fix) — when Inkscape crashes, `gs -sDEVICE=pdfwrite` rewrites the PDF; the rewritten file very often imports cleanly while keeping the text layer. Chain order is unit-tested; the actual segfault-repair is verified on the owner's Mac (this environment has no Inkscape).
+3. **pdftocairo** — on any remaining failure, or when the repair hop is unavailable (no `gs`).
 
 The backend that actually produced the file is returned (`{ converter }`) so callers can adapt: e.g. scaffold only runs outline-deduplication on the Inkscape path, because pdftocairo output has no text layer to bind anyway.
 
