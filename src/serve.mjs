@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { scaffold } from './eval/scaffold.mjs';
 import { buildEditor } from './eval/makeEditor.mjs';
+import { svgIds } from './templates/authoring.mjs';
 
 const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Ladder drawing — upload</title>
@@ -178,7 +179,7 @@ export function serve(port = 8123) {
         if (body.ids && body.ids.length) {
           const svgFile = join(TEMPLATES, id, t.base?.svg || 'base.clean.svg');
           if (!existsSync(svgFile)) return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: 'no base art to validate against' }));
-          const known = new Set([...readFileSync(svgFile, 'utf8').matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
+          const known = svgIds(readFileSync(svgFile, 'utf8'));
           const missing = body.ids.filter((x) => !known.has(String(x)));
           if (missing.length) return send(res, 400, 'application/json', JSON.stringify({ ok: false, error: `id(s) not in base art: ${missing.join(', ')}` }));
         }

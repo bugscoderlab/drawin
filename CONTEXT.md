@@ -33,7 +33,7 @@ _Avoid_: Fallback, fix-up
 Replacing vector-outline dimension text (a cluster of glyph paths, no `<text>` node) with a real `<text>` element, positioned/sized from the outline cluster's bbox, so text and geometry bindings work on drawings whose annotations were never real text. (Implemented in `src/eval/vision.mjs`, driven by the zero-dims trigger in scaffold.)
 
 **Unverified param**:
-A param whose value came from a vision pass rather than the PDF text layer; badged in the editor and cross-checked against rules output when a conflict exists. Flows into template.json as `unverified: true`; values that fail the px/mm plausibility gate are dropped and reported in the scaffold output.
+A param whose value came from a vision pass rather than the PDF text layer; badged in the editor and cross-checked against rules output when a conflict exists. Flows into template.json as `unverified: true`; values that fail the plausibility gate (implausible px/mm, or no arrowed dimension line) are dropped and reported in the scaffold output.
 
 **Preserve-by-default**:
 Re-scaffold semantics (issue #3): an existing template dir is merged (formulas, labels, named constants, and hand-made id-bindings whose ids still exist are kept; outline hiding, value bindings, and geometry bindings are recomputed). Wiping requires an explicit `--force`.

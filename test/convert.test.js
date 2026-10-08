@@ -91,7 +91,7 @@ test('clean run reports a single ok hop', () => {
   const runner = fakeRunner({});
   const out = join(mkdtempSync(join(tmpdir(), 'conv-')), 'out.svg');
   const r = convertPdf('in.pdf', out, { runner });
-  assert.deepEqual(r.hops, [{ attempt: 'inkscape', backend: 'inkscape', ok: true }]);
+  assert.deepEqual(r.hops, [{ attempt: 'inkscape', ok: true }]);
 });
 
 test('auto chain: hops recorded in order, failed hops carry the reason', () => {
@@ -99,11 +99,11 @@ test('auto chain: hops recorded in order, failed hops carry the reason', () => {
   const out = join(mkdtempSync(join(tmpdir(), 'conv-')), 'out.svg');
   const r = convertPdf('in.pdf', out, { runner });
   assert.deepEqual(
-    r.hops.map(({ attempt, backend, ok }) => ({ attempt, backend, ok })),
+    r.hops.map(({ attempt, ok }) => ({ attempt, ok })),
     [
-      { attempt: 'inkscape', backend: 'inkscape', ok: false },
-      { attempt: 'gs repair', backend: 'gs', ok: false },
-      { attempt: 'cairo repair', backend: 'pdftocairo', ok: true },
+      { attempt: 'inkscape', ok: false },
+      { attempt: 'gs repair', ok: false },
+      { attempt: 'cairo repair', ok: true },
     ],
   );
   assert.match(r.hops[0].reason, /segfault/);
