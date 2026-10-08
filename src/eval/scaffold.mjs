@@ -256,14 +256,21 @@ export async function scaffold(pdf, opts = {}) {
   const runs = textRuns(clean);
   const pageH = Number((clean.match(/<svg[^>]*\bheight="([\d.]+)"/) || [])[1]) || Math.max(...runs.map((r) => r.y), 1);
   const props = propose(runs, pageH);
-  // Preserve hand-edits across re-scaffolds: if this template already exists, carry
-  // the manual per-param fields (formula, label) over to the newly proposed params.
+  // Preserve-by-default re-scaffold (issue #3): if this template already exists,
+  // carry the human-tuned parts over — per-param formula/label, hand-made id-bindings
+  // (POST /bind) whose ids still exist in the fresh base art, and the params they
+  // reference. What is deterministic (outline hiding, value and geometry bindings)
+  // is always recomputed from the current art. opts.force restores the wipe.
   const prevPath = join(dir, 'template.json');
-  let prevById = {};
-  if (existsSync(prevPath)) {
+  let prevById = {}, prevIdBindings = [];
+  if (!opts.force && existsSync(prevPath)) {
     try {
       const prev = JSON.parse(readFileSync(prevPath, 'utf8'));
       prevById = Object.fromEntries((prev.params || []).map((p) => [p.id, p]));
+      const artIds = new Set([...clean.matchAll(/\bid="([^"]+)"/g)].map((m) => m[1]));
+      prevIdBindings = (prev.bindings || []).filter(
+        (b) => Array.isArray(b.ids) && b.ids.length && !b.geom && b.ids.every((id) => artIds.has(id))
+      );
       for (const p of props) {
         // match id AND value: dim ids are positional, so the same id can be a
         // different dimension when a re-scaffold finds new dims
@@ -297,8 +304,11 @@ export async function scaffold(pdf, opts = {}) {
     for (const [cid, val] of Object.entries(proposed.constants)) {
       if (!props.some((p) => p.id === cid)) props.push({ id: cid, label: `Constant (${cid})`, value: String(val), isConst: true });
     }
-    // Constants referenced by carried-over (preserved) formulas must survive
-    // a re-scaffold even when the LLM doesn't re-propose them.
+  }
+  // Constants referenced by carried-over (preserved) formulas must survive a
+  // re-scaffold even when the LLM is skipped or doesn't re-propose them.
+  // Runs on every scaffold; with no prior template (or --force) prevById is empty.
+  {
     const refIds = (expr) => (expr.match(/(?<![.\d])\b[a-zA-Z_]\w*\b/g) || []);
     for (const p of props) {
       if (!p.formula) continue;
@@ -309,6 +319,18 @@ export async function scaffold(pdf, opts = {}) {
       }
     }
   }
+  // A preserved id-binding whose param the fresh scaffold didn't propose (a
+  // hand-added /bind param) carries its param over, or the binding would dangle.
+  const idBoundParams = [];
+  for (const b of prevIdBindings) {
+    if (props.some((p) => p.id === b.param)) continue;
+    const old = prevById[b.param];
+    if (old) idBoundParams.push({ id: old.id, label: old.label, value: String(old.default), isConst: !!old.const, idBound: true });
+  }
+  props.push(...idBoundParams);
+  // a preserved hand-made id-binding re-anchors its param by id — it replaces
+  // the fresh value binding for that param instead of double-binding it
+  const idBound = new Set(prevIdBindings.map((b) => b.param));
   const tpl = {
     id,
     name: props.find((p) => p.id === 'productName')?.value || basename(file),
@@ -316,7 +338,7 @@ export async function scaffold(pdf, opts = {}) {
     match: {},
     base: { svg: 'base.clean.svg' },
     params: props.map((p) => ({ id: p.id, label: p.label, type: 'text', default: p.value, ...(p.formula ? { formula: p.formula } : {}), ...(p.isConst ? { const: true } : {}) })),
-    bindings: props.filter((p) => !p.isConst).map((p) => ({ value: p.value, param: p.id, mode: p.mode })),
+    bindings: props.filter((p) => !p.isConst && !p.idBound && !idBound.has(p.id)).map((p) => ({ value: p.value, param: p.id, mode: p.mode })),
     sample: makeSample(props),
   };
   // L2 geometry: dim lines (with their arrowheads and text centres) track the value.
@@ -326,25 +348,28 @@ export async function scaffold(pdf, opts = {}) {
     tpl.bindings.push(...g.bindings);
     geomLines = g.lines.length;
   }
+  // hand-made id-bindings carried over from the prior template (issue #3)
+  tpl.bindings.push(...prevIdBindings);
   writeFileSync(join(dir, 'template.json'), JSON.stringify(tpl, null, 2) + '\n');
 
   // 4. editor
   const ed = buildEditor(dir, { previewDir: opts.previewDir || join(resolve(opts.templatesDir || 'templates'), '..', 'preview') });
 
-  return { id, dir, outlines, props, llmFormulas, geomLines, editor: ed.out, editorMB: (ed.bytes / 1e6).toFixed(1) };
+  return { id, dir, outlines, props, llmFormulas, geomLines, preserved: prevIdBindings.length, editor: ed.out, editorMB: (ed.bytes / 1e6).toFixed(1) };
 }
 
 if (process.argv[1] && resolve(process.argv[1]).endsWith('scaffold.mjs')) {
   const pdf = process.argv[2];
-  if (!pdf) { console.error('usage: node src/eval/scaffold.mjs <file.pdf>'); process.exit(1); }
+  if (!pdf || pdf.startsWith('--')) { console.error('usage: node src/eval/scaffold.mjs <file.pdf> [--force]'); process.exit(1); }
   try {
-    const r = await scaffold(pdf);
+    const r = await scaffold(pdf, { force: process.argv.includes('--force') });
     console.log(`scaffolded: ${r.id}`);
     console.log(`  folder    : ${r.dir}`);
     console.log(`  outlines  : ${r.outlines} duplicate(s) hidden`);
     console.log(`  proposed  : ${r.props.length} binding(s)`);
     for (const p of r.props) console.log(`     ${p.id.padEnd(12)} ${p.mode.padEnd(6)} ${JSON.stringify(p.value)}`);
     if (r.geomLines) console.log(`  geometry  : ${r.geomLines} dimension line(s) track their value`);
+    if (r.preserved) console.log(`  preserved : ${r.preserved} hand-made id-binding(s) kept`);
     console.log(`  editor    : ${r.editor}  (${r.editorMB} MB)`);
   } catch (e) { console.error('ERROR: ' + e.message); process.exit(1); }
 }
