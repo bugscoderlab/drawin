@@ -79,6 +79,21 @@ export function findNumber(runs, num) {
   return null;
 }
 
+/** Dimension presence checks of an extract against a generated SVG. */
+export function checkDimensions(extract, svg) {
+  const checks = [];
+  const skipped = [];
+  if (!svg) return { checks, skipped };
+  const runs = textRuns(svg);
+  for (const [field, value] of Object.entries(extract.params ?? {})) {
+    const n = parseNumber(value);
+    if (n === null || n < 10) { skipped.push(field); continue; }
+    const found = findNumber(runs, n);
+    checks.push({ field, value, ok: !!found, where: found?.where ?? null });
+  }
+  return { checks, skipped };
+}
+
 /**
  * Verify: every extracted dimension (>= 10) must appear in the generated
  * drawing's text layer. Non-dimension fields (dates, names) are reported as
@@ -87,17 +102,12 @@ export function findNumber(runs, num) {
 export async function verifyPdf(pdfPath, { llm = 'auto', templatesDir } = {}) {
   const extract = await extractParams(pdfPath, { llm });
   const gen = generateFromExtract(extract, { templatesDir });
-  const checks = [];
-  const skipped = [];
+  let checks, skipped;
   if (gen.svg) {
-    const runs = textRuns(gen.svg);
-    for (const [field, value] of Object.entries(extract.params ?? {})) {
-      const n = parseNumber(value);
-      if (n === null || n < 10) { skipped.push(field); continue; }
-      const found = findNumber(runs, n);
-      checks.push({ field, value, ok: !!found, where: found?.where ?? null });
-    }
+    ({ checks, skipped } = checkDimensions(extract, gen.svg));
   } else {
+    checks = [];
+    skipped = [];
     for (const [field, value] of Object.entries(extract.params ?? {})) {
       const n = parseNumber(value);
       if (n !== null && n >= 10) checks.push({ field, value, ok: false, where: null, reason: gen.error ?? 'no svg' });

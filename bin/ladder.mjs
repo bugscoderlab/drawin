@@ -19,7 +19,8 @@ const usage = () => {
   node bin/ladder.mjs extract  <file.pdf> [-o params.json] [--llm-whole|--no-llm]
   node bin/ladder.mjs eval     [file.pdf ...] [--with-text] [--json]
   node bin/ladder.mjs generate <params.json> [-o drawing.svg]
-  node bin/ladder.mjs verify   <file.pdf> [--no-llm] [--strict]`);
+  node bin/ladder.mjs verify   <file.pdf> [--no-llm] [--strict]
+  node bin/ladder.mjs batch    <dir> --out <dir> [--no-llm]`);
 };
 
 try {
@@ -151,6 +152,22 @@ try {
       if (r.skipped.length) console.log(`  skipped (non-dimension): ${r.skipped.join(', ')}`);
       if (r.extract.warnings.length) console.log(`  warnings: ${r.extract.warnings.join('; ')}`);
       if (strict && r.ok < r.total) process.exit(1);
+      break;
+    }
+    case 'batch': {
+      const args = process.argv.slice(3);
+      const oIdx = args.indexOf('--out');
+      const out = oIdx >= 0 ? args[oIdx + 1] : null;
+      const noLlm = args.includes('--no-llm');
+      const [dir] = args.filter((a, i) => a !== '--out' && args[i - 1] !== '--out' && !a.startsWith('--'));
+      if (!dir || !out) { usage(); process.exit(1); }
+      const { batch } = await import('../src/batch.mjs');
+      const r = await batch(resolve(dir), resolve(out), { llm: noLlm ? 'off' : 'auto', templatesDir: resolve('templates') });
+      console.log(`batch: ${r.ok}/${r.files} ok${r.failed ? `, ${r.failed} FAILED` : ''} — ${r.summaryPath}`);
+      for (const row of r.rows) {
+        console.log(`  ${row.status === 'ok' ? '✓' : '✗'} ${row.file}${row.module ? ` [${row.module}/${row.profile}]` : ''}${row.dims ? ` dims ${row.dims}` : ''}${row.status !== 'ok' ? ` — ${row.error}` : ''}`);
+      }
+      if (r.failed) process.exitCode = 1;
       break;
     }
     default:

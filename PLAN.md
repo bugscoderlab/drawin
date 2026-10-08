@@ -1,6 +1,6 @@
 # Laddertech Ladder Drawing — PDF → SVG Plan
 
-Status: **in progress — Phase 0–2.1 + 2.2 done (2026-10-08). Next: batch (3.1), then HTML/MCP/pdf.js polish**
+Status: **in progress — through Phase 3 (2026-10-08). Remaining: HTML download-SVG (2.4), 009 conversion fix, MCP tools (2.5), pdf.js spike (2.6)**
 Folder: `/Users/z/Documents/drawin`
 Owner inputs: 3 reference PDFs in this folder, 1 existing HTML generator
 Last updated: 2026-10-08
@@ -368,9 +368,9 @@ Every pass sees the **whole page** (no cropping).
 
 ### Phase 3 — Scale
 
-- [ ] **3.1** `ladder batch ./pdfs --out ./out` → per PDF: `converted.svg`, `generated.svg`, `params.json`, `report.md`; plus a folder summary.
-- [ ] **3.2** Add profiles as new vendors appear — adding a vendor is data, not code.
-- [ ] **3.3** Corpus tuning loop: rerun coverage + eval, promote stable rules, keep the rest as profiles/LLM.
+- [x] **3.1** `ladder batch ./pdfs --out ./out` — per PDF: `converted.svg`, `generated.svg`, `params.json`, `report.md`; plus a folder summary (`report.md` table + failures section). One bad PDF is reported, never fatal. *(Built: `src/batch.mjs`.)*
+- [x] **3.2** Profiles as data — a new vendor is an entry in `src/extract/profiles.mjs`, no core changes. *(Built with 1.5.)*
+- [x] **3.3** Tuning loop — `ladder eval` (scoreboard) + per-file `warnings`/`unmappedText` in batch params are the corpus feedback inputs. *(Built with 1B.7/3.1.)*
 
 **Acceptance:** a folder of PDFs yields a complete, self-describing output set with a low-confidence summary.
 
