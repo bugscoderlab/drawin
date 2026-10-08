@@ -6,7 +6,7 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-export function buildEditor(tplDir = 'templates/trolley-slt') {
+export function buildEditor(tplDir = 'templates/trolley-slt', { previewDir } = {}) {
   const dir = resolve(tplDir);
   const tpl = JSON.parse(readFileSync(join(dir, 'template.json'), 'utf8'));
   const svgPath = join(dir, tpl.base?.svg || 'base.clean.svg');
@@ -19,8 +19,9 @@ export function buildEditor(tplDir = 'templates/trolley-slt') {
     .replace('__TEMPLATE_JSON__', () => JSON.stringify(tpl))
     .replace('__BASE_SVG__', () => svg);
 
-  mkdirSync(resolve('preview'), { recursive: true });
-  const out = join(resolve('preview'), `${tpl.id}-editor.html`);
+  const dest = resolve(previewDir || 'preview');
+  mkdirSync(dest, { recursive: true });
+  const out = join(dest, `${tpl.id}-editor.html`);
   writeFileSync(out, html);
   return { out, bytes: html.length, id: tpl.id };
 }

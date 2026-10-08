@@ -291,7 +291,7 @@ export async function scaffold(pdf, opts = {}) {
   writeFileSync(join(dir, 'template.json'), JSON.stringify(tpl, null, 2) + '\n');
 
   // 4. editor
-  const ed = buildEditor(dir);
+  const ed = buildEditor(dir, { previewDir: opts.previewDir || join(resolve(opts.templatesDir || 'templates'), '..', 'preview') });
 
   return { id, dir, outlines, props, llmFormulas, geomLines, editor: ed.out, editorMB: (ed.bytes / 1e6).toFixed(1) };
 }
