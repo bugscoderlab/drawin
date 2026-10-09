@@ -46,8 +46,8 @@ try {
     }
     case 'proof': {
       if (!arg) { usage(); process.exit(1); }
-      const { runProof, parseOverrides } = await import('../src/eval/proofBind.mjs');
-      runProof(arg, parseOverrides(process.argv.slice(4)));
+      process.argv[2] = arg;
+      await import('../src/eval/proofBind.mjs');
       break;
     }
     case 'render': {

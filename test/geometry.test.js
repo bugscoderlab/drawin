@@ -14,7 +14,7 @@ import { execFileSync } from 'node:child_process';
 import { applyGeometry, parseMatrix } from '../src/templates/geometry.mjs';
 import { renderTemplate } from '../src/templates/render.mjs';
 import { parseQueryAll } from '../src/templates/authoring.mjs';
-import { proposeGeometry, scaffold, reportScaffold } from '../src/eval/scaffold.mjs';
+import { proposeGeometry, scaffold, reportScaffold, SPAN_TOL } from '../src/eval/scaffold.mjs';
 import { renderById } from '../src/templates/renderCmd.mjs';
 import { availableConverters } from '../src/convert/convert.mjs';
 
@@ -534,17 +534,20 @@ test('#11 e2e: re-scaffolded 004 -> dim1=1000 widens the cap; bars land on the s
     const after = parseMatrix(out.svg.match(tagRe(id))[1]);
     assert.ok(Math.abs((after.e - before.e) - (1000 - 500) * s) < 1e-2, `${id} shifts by (value - anchor) * pxPerUnit`);
   }
-  // the bars land on the shifted-rail position: the art insets the cap bars
-  // ~1.4px inside the rail plane, and that inset scales with the edit — the
-  // bar ends track the shifted bracket plate within the same ±10% tolerance
-  // the span rule admitted them with.
+  // The bars land on the shifted-rail position only within the tolerance the
+  // span rule admitted them with: ±SPAN_TOL of the dim extent (≈4px — the art
+  // insets the bar ends ~1.4px inside the rail plane), grown by the value
+  // ratio as the inset scales with the edit. Exact landing would require art
+  // whose bars terminate exactly on the rail plane; ±10% span tolerance
+  // cannot guarantee that.
   const bar = parseMatrix(out.svg.match(tagRe('path4307'))[1]);
   const plate = parseMatrix(out.svg.match(tagRe('path4279'))[1]);
   const cleanPlate = parseMatrix(clean.match(tagRe('path4279'))[1]);
   const PLATE_NEAR = 163.385;           // path4279 bbox near edge (measured)
   const barEnd = bar.e + 0.327;         // stroke half-width: bbox edge of the bar end
-  assert.ok(Math.abs(barEnd - (plate.e - cleanPlate.e + PLATE_NEAR)) < 5,
-    `bar end ${barEnd.toFixed(2)} lands on the shifted plate ${(plate.e - cleanPlate.e + PLATE_NEAR).toFixed(2)}`);
+  const admitted = SPAN_TOL * (s * 500) * (1000 / 500);
+  assert.ok(Math.abs(barEnd - (plate.e - cleanPlate.e + PLATE_NEAR)) < admitted,
+    `bar end ${barEnd.toFixed(2)} lands on the shifted plate ${(plate.e - cleanPlate.e + PLATE_NEAR).toFixed(2)} within ±SPAN_TOL×extent×ratio (${admitted.toFixed(1)})`);
 
   // the annotation reads 1000 (first glyph run of the group carries the value)
   const ann = out.svg.match(/<text\b[^>]*?\bid="text1465"[^>]*>[\s\S]*?<\/text>/)[0];

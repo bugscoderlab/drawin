@@ -157,6 +157,44 @@ test('hand-made part binding drops when the value changed or an id is gone', { s
   assert.ok(!tpl2.bindings.some((b) => (b.ids || []).includes('ghost-part')), 'binding whose ids are gone is dropped');
 });
 
+test('stale auto-proposed annotation binding is never carried when its dim is re-recognised', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'ladder-re-'));
+  await scaffold(PDF, { llm: false, id: 're-stale', templatesDir: tmp });
+
+  // A previous run's auto-proposed text binding (half rate) after a re-export
+  // changed the glyph ids (old ids still exist as unrelated elements): dim6
+  // is re-recognised fresh (annotated, no part proposals, NOT ambiguous), so
+  // auto-reposed bindings are recomputed, never carried — the stale binding
+  // must not survive rebuilt at the full rate (#12/spec #8).
+  const tpl = readTpl(tmp, 're-stale');
+  tpl.bindings.push({ ids: ['path2'], param: 'dim6', geom: { op: 'shiftY', anchor: 305, pxPerUnit: 0.000001 } });
+  writeTpl(tmp, 're-stale', tpl);
+
+  const r2 = await scaffold(PDF, { llm: false, id: 're-stale', templatesDir: tmp });
+  assert.equal(r2.preservedParts, 0, 'a stale auto-proposed binding is never carried');
+  const tpl2 = readTpl(tmp, 're-stale');
+  assert.ok(!tpl2.bindings.some((b) => (b.ids || []).includes('path2') && b.param === 'dim6'), 'stale text binding dropped, not rebuilt at the full rate');
+});
+
+test('hand-made part binding on an ambiguous dim still survives re-scaffold', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'ladder-re-'));
+  await scaffold(PDF, { llm: false, id: 're-ambig', templatesDir: tmp });
+
+  // dim5's fresh part proposal is ambiguous (0 bound) — the scaffold proposed
+  // nothing for it, so a hand-made part binding for it still carries (spec
+  // story 18: hand-add part bindings for the dims the scaffold skipped).
+  const tpl = readTpl(tmp, 're-ambig');
+  tpl.bindings.push({ ids: ['path2'], param: 'dim5', geom: { op: 'shiftY', anchor: 1000, pxPerUnit: 0.000001 } });
+  writeTpl(tmp, 're-ambig', tpl);
+
+  const r2 = await scaffold(PDF, { llm: false, id: 're-ambig', templatesDir: tmp });
+  assert.equal(r2.preservedParts, 1, 'hand-made part binding on an ambiguous dim is carried');
+  const tpl2 = readTpl(tmp, 're-ambig');
+  const kept = tpl2.bindings.find((b) => (b.ids || []).includes('path2'));
+  assert.equal(kept.param, 'dim5', 'membership kept');
+  assert.equal(kept.geom.anchor, 1000, 'calibration re-derived from the fresh dim value');
+});
+
 test('auto-proposed part bindings are always recomputed, never carried', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
   const tmp = mkdtempSync(join(tmpdir(), 'ladder-re-'));
   await scaffold(PDF, { llm: false, id: 're-partauto', templatesDir: tmp });

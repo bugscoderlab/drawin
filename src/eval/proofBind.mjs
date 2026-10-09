@@ -87,6 +87,10 @@ export function runProof(tplDirRaw = 'templates/trolley-slt', opts = {}) {
   return { out: OUT, before, after };
 }
 
-if (process.argv[1] && resolve(process.argv[1]).endsWith('proofBind.mjs')) {
+// Runs standalone (`node src/eval/proofBind.mjs <dir> [--set ...]`) and when
+// dispatched from bin/ladder.mjs (`ladder proof <dir> [--set ...]`), which
+// sets process.argv[2] and imports this module for its side effect.
+const invoked = process.argv[1] && resolve(process.argv[1]);
+if (invoked && (invoked.endsWith('proofBind.mjs') || invoked.endsWith('ladder.mjs'))) {
   runProof(process.argv[2], parseOverrides(process.argv.slice(3)));
 }

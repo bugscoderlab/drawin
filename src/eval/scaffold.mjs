@@ -137,11 +137,14 @@ function propose(runs, pageH) {
  * part-proposal stage against the claimed set, so a dim line is never
  * re-classified as a part and no element binds twice (#10).
  *
- *   proposeGeometry(rows, props, svg) -> { bindings, lines: [paramId], parts: [{ param, bound, skipped, ambiguous? }], calib }
+ *   proposeGeometry(rows, props, svg) -> { bindings, lines: [paramId], parts: [{ param, bound, skipped, ambiguous? }], calib, annotated }
  *
  *  `calib` maps each recognised param to { v, s } (dim value and its
  *  self-calibrated px/mm) — the re-scaffold carry-over (ticket #12) re-derives
- *  a preserved part binding's anchor/pxPerUnit from it. */
+ *  a preserved part binding's anchor/pxPerUnit from it. `annotated` is the
+ *  set of params that received fresh ANNOTATION bindings in this run (stage 2)
+ *  — the preserve step never carries a previous binding whose param was
+ *  auto-reposed here: recomputed, never carried (except ambiguous dims). */
 export function proposeGeometry(rows, props, svg = '') {
   const num = (v) => { const n = parseFloat(String(v).replace(/,/g, '')); return Number.isNaN(n) ? null : n; };
   const cleanIds = svg ? svgIds(svg) : null;
@@ -233,6 +236,7 @@ export function proposeGeometry(rows, props, svg = '') {
     lines: recs.map((r) => r.p.id),
     parts,
     calib: Object.fromEntries(recs.map((r) => [r.p.id, { v: num(r.p.value), s: r.s }])),
+    annotated: new Set(recs.map((r) => r.p.id)),
   };
 }
 
@@ -242,8 +246,9 @@ export function proposeGeometry(rows, props, svg = '') {
 // test/geometry.test.js).
 const LOCALITY = { along: 2, cross: 1 };
 // Span rule tolerance: measured-axis extent and end positions must match the
-// dim within ±10% of the dim extent.
-const SPAN_TOL = 0.10;
+// dim within ±10% of the dim extent. Exported for the e2e landing assertion,
+// which derives its bound from this admitted tolerance (locked constant).
+export const SPAN_TOL = 0.10;
 
 /** Part-proposal stage (spec #8, tickets #10/#11): for a dimension whose
  *  annotation bound, classify the axis-aligned elements inside the locality
@@ -551,6 +556,7 @@ export async function scaffold(pdf, opts = {}) {
   let geomLines = 0;
   let parts = [];
   let calib = {};
+  let annotated = new Set();
   let freshGeomIds = new Set();
   if (rows.length) {
     const g = proposeGeometry(rows, props, clean);
@@ -558,6 +564,7 @@ export async function scaffold(pdf, opts = {}) {
     geomLines = g.lines.length;
     parts = g.parts;
     calib = g.calib;
+    annotated = g.annotated;
     freshGeomIds = new Set(g.bindings.flatMap((b) => b.ids || []));
   }
   // hand-made id-bindings carried over from the prior template (issue #3)
@@ -565,15 +572,23 @@ export async function scaffold(pdf, opts = {}) {
   // hand-made part bindings carried over (ticket #12): kept only when the
   // fresh proposal left their dim untouched — a dim with fresh part proposals
   // is reproduced (auto-proposed bindings are always recomputed, never
-  // carried) — and when none of their ids was fresh-bound elsewhere (an
-  // element binds to at most one dimension, spec #8). Membership (ids, param,
-  // op incl. about) is kept; anchor and pxPerUnit are re-derived from the
-  // fresh art, so stale calibration can never survive a re-scaffold.
+  // carried), and so is a dim whose annotations were re-proposed this run:
+  // a param in `annotated` was rebuilt from the fresh art, so a previous
+  // binding for it (e.g. a half-rate text binding whose glyph ids changed)
+  // would duplicate it at a recomputed rate. Exception: an ambiguous dim
+  // (0 bound) proposed nothing at all — hand-made part bindings for the dims
+  // the scaffold skipped still carry (spec story 18). A carried binding must
+  // also have none of its ids fresh-bound elsewhere (an element binds to at
+  // most one dimension, spec #8). Membership (ids, param, op incl. about) is
+  // kept; anchor and pxPerUnit are re-derived from the fresh art, so stale
+  // calibration can never survive a re-scaffold.
   const carriedParts = [];
   const reproduced = new Set(parts.filter((d) => d.bound > 0).map((d) => d.param));
+  const skippedAmbiguous = new Set(parts.filter((d) => d.ambiguous && d.bound === 0).map((d) => d.param));
   for (const b of prevPartBindings) {
     const c = calib[b.param];
     if (!c || reproduced.has(b.param) || b.ids.some((id) => freshGeomIds.has(id))) continue;
+    if (annotated.has(b.param) && !skippedAmbiguous.has(b.param)) continue;
     const geom = b.geom.op?.startsWith('stretch')
       ? { op: b.geom.op, ...(b.geom.about ? { about: b.geom.about } : {}), anchor: c.v }
       : { op: b.geom.op, anchor: c.v, pxPerUnit: c.s };

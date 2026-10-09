@@ -32,12 +32,14 @@ For each dimension whose annotation bound (stages 1–2: structural recognition 
 
 ## Ambiguity policy
 
-Every skip is counted and reported per dimension in the scaffold report — `parts: dim1 86 bound, 160 skipped`, or `0 bound, skipped: ambiguous` — never silent. (On the dense 004 sheet every vertical dim lands `skipped: ambiguous` in v1 — one unclassifiable element in the locality box forfeits the whole dimension — while the horizontal cage width binds its 86 elements.) Ambiguous dims remain achievable: hand-add the part binding to `template.json` directly (the editor/`POST /bind` surface does not author geom bindings; bindings remain scaffold output + hand-authored JSON). Missing ids, non-numeric values, and unsupported transforms are reported in the binding report, never thrown (resilience rule, unchanged).
+Every skip is counted and reported per dimension in the scaffold report — `parts: dim1 86 bound, 160 skipped`, or `0 bound, skipped: ambiguous` — never silent. (On the dense 004 sheet every vertical dim lands `skipped: ambiguous` in v1 while the horizontal cage width binds its 86 elements.) Ambiguous dims remain achievable: hand-add the part binding to `template.json` directly (the editor/`POST /bind` surface does not author geom bindings; bindings remain scaffold output + hand-authored JSON). Missing ids, non-numeric values, and unsupported transforms are reported in the binding report, never thrown (resilience rule, unchanged).
+
+**What triggers ambiguity, exactly (shipped):** an in-box candidate whose transform is not axis-aligned, or that overlaps BOTH end planes without matching the span rule. Other non-matching candidates — datum-side attachments, elements beyond the moving end, labels, extension lines — count as skipped and do NOT block. A review considered broadening this to any non-matching candidate not clearly on the datum side (spec #8's "or otherwise unclassifiable"); measured against the real 004 art it fails: 92 of dim1's 162 skipped candidates are not datum-side (48 beyond the moving plane — FLATBAR callout texts, extension lines, rail marks; 44 interior — the dim's own tspan texts, platform edges crossing the end planes), so dim1 would report `skipped: ambiguous` and forfeit its 86 bindings, breaking the real-art e2e. The broadening was rejected; the all-or-nothing trigger stays as shipped.
 
 ## Preserve semantics (re-scaffold, extends issue #3)
 
 - A previous **geom binding** (hand-made or not) is a carry candidate iff **all its ids exist in the fresh art AND its param's value is unchanged** (the params id+value rule — dim ids are positional).
-- It is *kept* only when the fresh proposal left its dim untouched — a dim with fresh part proposals is reproduced, because **auto-proposed bindings are always recomputed, never carried** — and when none of its ids was fresh-bound elsewhere.
+- It is *kept* only when the fresh proposal left its dim untouched — a dim with fresh part proposals is reproduced, because **auto-proposed bindings are always recomputed, never carried** — and, likewise, **never when its param received fresh annotation bindings in this run** (the geometry pass exposes that param set as `annotated`): a re-recognised dim's previous annotation-grade bindings (e.g. a half-rate text binding whose glyph ids changed) would otherwise be carried rebuilt at a recomputed rate. **Exception: an ambiguous dim** (0 bound, `ambiguous: true`) proposed nothing at all — hand-made part bindings for the dims the scaffold skipped still carry (spec story 18). A kept binding must also have none of its ids fresh-bound elsewhere.
 - The carried binding keeps **membership** (ids, param, op incl. `about`); its **calibration** (`anchor`/`pxPerUnit`) is re-derived from the fresh art.
 - Net effect needs no auto-vs-hand marker: fresh proposals ∪ preserved-not-reproduced, calibrations always fresh. `--force` wipes everything as today.
 
@@ -47,7 +49,7 @@ None extra. The part-proposal stage consumes the `inkscape --query-all` bbox row
 
 ## Editor surface
 
-`editor.template.html` carries a faithful inline port of `geometry.mjs` (including `extent1D` for `about: "max"`); `test/geometry.test.js` runs identical binding vectors through both engines and asserts byte-identical SVGs (port parity). The editor badge reports bound/skipped counts. The browser editor only *applies* part bindings; there is no editor UI for inspecting or editing them (out of scope).
+`editor.template.html` carries a faithful inline port of `geometry.mjs` (including `extent1D` for `about: "max"`); `test/geometry.test.js` runs identical binding vectors through both engines and asserts byte-identical SVGs (port parity). The editor badge reports per-binding ok counts (`N/M bound`, plus a skipped count for failed bindings); the per-dimension bound/skipped counts live in the scaffold report (`reportScaffold`). The browser editor only *applies* part bindings; there is no editor UI for inspecting or editing them (out of scope).
 
 ## V1 limitations
 
