@@ -40,7 +40,7 @@ Replacing vector-outline dimension text (a cluster of glyph paths, no `<text>` n
 A param whose value came from a vision pass rather than the PDF text layer; badged in the editor and cross-checked against rules output when a conflict exists. Flows into template.json as `unverified: true`; values that fail the plausibility gate (implausible px/mm, or no arrowed dimension line) are dropped and reported in the scaffold output.
 
 **Preserve-by-default**:
-Re-scaffold semantics (issue #3): an existing template dir is merged (formulas, labels, named constants, and hand-made id-bindings whose ids still exist are kept; outline hiding, value bindings, and geometry bindings are recomputed). Wiping requires an explicit `--force`.
+Re-scaffold semantics (issue #3, extended by #12): an existing template dir is merged (formulas, labels, named constants, and hand-made id-bindings whose ids still exist are kept; a hand-made part binding survives when all its ids exist and its param's value is unchanged, keeping ids/param/op while its anchor/pxPerUnit are re-derived from the fresh art; outline hiding, value bindings, and geometry proposals are recomputed). Wiping requires an explicit `--force`.
 _Avoid_: Merge mode, safe scaffold
 
 **Proof**:

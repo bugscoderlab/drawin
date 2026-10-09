@@ -137,8 +137,11 @@ function propose(runs, pageH) {
  * part-proposal stage against the claimed set, so a dim line is never
  * re-classified as a part and no element binds twice (#10).
  *
- *   proposeGeometry(rows, props, svg) -> { bindings, lines: [paramId], parts: [{ param, bound, skipped }] }
- */
+ *   proposeGeometry(rows, props, svg) -> { bindings, lines: [paramId], parts: [{ param, bound, skipped }], calib }
+ *
+ *  `calib` maps each recognised param to { v, s } (dim value and its
+ *  self-calibrated px/mm) — the re-scaffold carry-over (ticket #12) re-derives
+ *  a preserved part binding's anchor/pxPerUnit from it. */
 export function proposeGeometry(rows, props, svg = '') {
   const num = (v) => { const n = parseFloat(String(v).replace(/,/g, '')); return Number.isNaN(n) ? null : n; };
   const cleanIds = svg ? svgIds(svg) : null;
@@ -225,7 +228,12 @@ export function proposeGeometry(rows, props, svg = '') {
     bindings.push(...pr.bindings);
     parts.push({ param: r.p.id, bound: pr.bound, skipped: pr.skipped });
   }
-  return { bindings, lines: recs.map((r) => r.p.id), parts };
+  return {
+    bindings,
+    lines: recs.map((r) => r.p.id),
+    parts,
+    calib: Object.fromEntries(recs.map((r) => [r.p.id, { v: num(r.p.value), s: r.s }])),
+  };
 }
 
 // Locality guard (spec #8): only elements near the dim line's own view are
@@ -418,7 +426,7 @@ export async function scaffold(pdf, opts = {}) {
   // Preserve hand-edits across re-scaffolds: if this template already exists, carry
   // the manual per-param fields (formula, label) over to the newly proposed params.
   const prevPath = join(dir, 'template.json');
-  let prevById = {}, prevIdBindings = [];
+  let prevById = {}, prevIdBindings = [], prevPartBindings = [];
   if (!opts.force && existsSync(prevPath)) {
     try {
       const prev = JSON.parse(readFileSync(prevPath, 'utf8'));
@@ -426,6 +434,17 @@ export async function scaffold(pdf, opts = {}) {
       const artIds = svgIds(clean);
       prevIdBindings = (prev.bindings || []).filter(
         (b) => Array.isArray(b.ids) && b.ids.length && !b.geom && b.ids.every((id) => artIds.has(id))
+      );
+      // Hand-made part bindings (issue #8, ticket #12): a previous geom binding
+      // is a carry candidate iff its ids all exist in the fresh art AND its
+      // param's value is unchanged (the params id+value rule — dim ids are
+      // positional, so a changed value means the art moved). Whether it
+      // survives is decided after the geometry pass, against the fresh
+      // proposals; its calibration is always re-derived from the fresh art.
+      prevPartBindings = (prev.bindings || []).filter(
+        (b) => Array.isArray(b.ids) && b.ids.length && b.geom && b.ids.every((id) => artIds.has(id))
+          && prevById[b.param]
+          && props.some((p) => p.id === b.param && String(prevById[b.param].default) === String(p.value))
       );
       for (const p of props) {
         // match id AND value: dim ids are positional, so the same id can be a
@@ -500,20 +519,42 @@ export async function scaffold(pdf, opts = {}) {
   // L2 geometry: dim lines (with their arrowheads and text centres) track the value.
   let geomLines = 0;
   let parts = [];
+  let calib = {};
+  let freshGeomIds = new Set();
   if (rows.length) {
     const g = proposeGeometry(rows, props, clean);
     tpl.bindings.push(...g.bindings);
     geomLines = g.lines.length;
     parts = g.parts;
+    calib = g.calib;
+    freshGeomIds = new Set(g.bindings.flatMap((b) => b.ids || []));
   }
   // hand-made id-bindings carried over from the prior template (issue #3)
   tpl.bindings.push(...prevIdBindings);
+  // hand-made part bindings carried over (ticket #12): kept only when the
+  // fresh proposal left their dim untouched — a dim with fresh part proposals
+  // is reproduced (auto-proposed bindings are always recomputed, never
+  // carried) — and when none of their ids was fresh-bound elsewhere (an
+  // element binds to at most one dimension, spec #8). Membership (ids, param,
+  // op incl. about) is kept; anchor and pxPerUnit are re-derived from the
+  // fresh art, so stale calibration can never survive a re-scaffold.
+  const carriedParts = [];
+  const reproduced = new Set(parts.filter((d) => d.bound > 0).map((d) => d.param));
+  for (const b of prevPartBindings) {
+    const c = calib[b.param];
+    if (!c || reproduced.has(b.param) || b.ids.some((id) => freshGeomIds.has(id))) continue;
+    const geom = b.geom.op?.startsWith('stretch')
+      ? { op: b.geom.op, ...(b.geom.about ? { about: b.geom.about } : {}), anchor: c.v }
+      : { op: b.geom.op, anchor: c.v, pxPerUnit: c.s };
+    carriedParts.push({ ids: b.ids, param: b.param, geom });
+  }
+  tpl.bindings.push(...carriedParts);
   writeFileSync(join(dir, 'template.json'), JSON.stringify(tpl, null, 2) + '\n');
 
   // 4. editor
   const ed = buildEditor(dir, { previewDir: opts.previewDir || join(resolve(opts.templatesDir || 'templates'), '..', 'preview') });
 
-  return { id, dir, outlines, props, llmFormulas, geomLines, parts, preserved: prevIdBindings.length, vision, editor: ed.out, editorMB: (ed.bytes / 1e6).toFixed(1) };
+  return { id, dir, outlines, props, llmFormulas, geomLines, parts, preserved: prevIdBindings.length, preservedParts: carriedParts.length, vision, editor: ed.out, editorMB: (ed.bytes / 1e6).toFixed(1) };
 }
 
 /** Human-readable scaffold summary — the single reporting path for both
@@ -531,6 +572,7 @@ export function reportScaffold(r, log = console.log) {
     for (const d of r.parts) log(`     ${d.param.padEnd(12)} ${d.bound} bound, ${d.skipped} skipped`);
   }
   if (r.preserved) log(`  preserved : ${r.preserved} hand-made id-binding(s) kept`);
+  if (r.preservedParts) log(`  preserved : ${r.preservedParts} hand-made part binding(s) kept, calibration re-derived`);
   if (r.vision.called) log(`  vision    : ${r.vision.dims} dim(s) recovered, ${r.vision.rejected} rejected by the plausibility check`);
   log(`  editor    : ${r.editor}  (${r.editorMB} MB)`);
 }
