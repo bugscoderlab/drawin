@@ -16,9 +16,9 @@ User + operator documentation for the PDF → SVG drawing pipeline.
 | `ladder render` | Re-render a template (L1 real art / L3 code model) with new params |
 | `ladder scaffold` | Author a new template from a PDF |
 | `ladder serve` | Upload PDF → scaffold → live editor (http://localhost:8123) |
-| `ladder proof` | Before/after render check for a template |
+| `ladder proof` | Before/after render check for a template (`--set param=value` overrides the sample edit) |
 | `ladder editor` | Build the self-contained editor HTML for a template |
-| [`npm test`](Commands.md#npm-test) | 23 tests: snapshots, registry, render, convert (auto-skips without tools) |
+| [`npm test`](Commands.md#npm-test) | 127 tests: snapshots, registry, render, geometry/part bindings, re-scaffold (auto-skips without tools) |
 
 ## Concepts
 
