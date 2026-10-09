@@ -19,8 +19,12 @@ An association between a param and SVG node(s). Modes: `text` (exact string), `g
 _Avoid_: Link, mapping
 
 **Geom binding**:
-A transform-level binding on a dimension line, its moving-end arrowhead, and its value text, driven by a numeric param — the line stretches, arrowheads and centred text shift. Self-calibrating: px/mm derived from the drawing itself.
+A transform-level binding on SVG node(s), driven by a numeric param: either an annotation binding (a dimension line, its moving-end arrowhead, and its value text) or a Part binding. Self-calibrating: px/mm derived from the drawing itself.
 _Avoid_: Stretch rule, transform rule
+
+**Part binding**:
+A geom binding on the part geometry a dimension measures: elements spanning the dim extent stretch, elements attached to the moving end shift.
+_Avoid_: Stretch rule, resize rule, cascade binding
 
 **Dimension line**:
 A dimension annotation recognised structurally: a thin straight span with arrowheads at both ends and its value centred on the line. Recognised by shape, not by content.
