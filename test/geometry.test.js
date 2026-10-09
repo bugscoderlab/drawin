@@ -20,6 +20,62 @@ const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 // ---------- applyGeometry units ----------
 
+test('stretchX about:"max" pins the far end; the local-origin end tracks', () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg"><path id="bar" transform="matrix(2,0,0,3,10,20)" d="M 0,0 H 5"/></svg>';
+  const { svg: out, report } = applyGeometry(svg, [
+    { ids: ['bar'], param: 'dim', geom: { op: 'stretchX', about: 'max', anchor: 100 } },
+  ], { dim: '150' });
+  assert.equal(report[0].ok, true);
+  // ratio 1.5: far end (local x=5) sat at user x 2*5+10=20 and must stay there,
+  // so the origin end (translation) tracks by 2*5*(1-1.5).
+  assert.deepEqual(parseMatrix(out.match(/transform="([^"]*)"/)[1]), { a: 3, b: 0, c: 0, d: 3, e: 5, f: 20 });
+});
+
+test('stretchX about:"max" on a negative-extent path pins the far end', () => {
+  // The 004 cap-bar shape: local origin at the moving rail, path extending
+  // negative — the far end is the local-min end and stays fixed.
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg"><path id="bar" transform="matrix(2,0,0,3,10,20)" d="M 0,0 H -5"/></svg>';
+  const { svg: out, report } = applyGeometry(svg, [
+    { ids: ['bar'], param: 'dim', geom: { op: 'stretchX', about: 'max', anchor: 100 } },
+  ], { dim: '150' });
+  assert.equal(report[0].ok, true);
+  // far end (local x=-5) sat at user x 2*-5+10=0 and must stay there; the
+  // origin (moving) end tracks by 2*-5*(1-1.5) in +x.
+  assert.deepEqual(parseMatrix(out.match(/transform="([^"]*)"/)[1]), { a: 3, b: 0, c: 0, d: 3, e: 15, f: 20 });
+});
+
+test('stretchY about:"max" pins the far end along y', () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg"><path id="bar" transform="matrix(1,0,0,2,5,6)" d="M 0,0 V 4"/></svg>';
+  const { svg: out, report } = applyGeometry(svg, [
+    { ids: ['bar'], param: 'dim', geom: { op: 'stretchY', about: 'max', anchor: 100 } },
+  ], { dim: 200 });
+  assert.equal(report[0].ok, true);
+  // ratio 2: far end (local y=4) sat at user y 2*4+6=14 and must stay there.
+  assert.deepEqual(parseMatrix(out.match(/transform="([^"]*)"/)[1]), { a: 1, b: 0, c: 0, d: 4, e: 5, f: -2 });
+});
+
+test('omitted about renders byte-identical to explicit "min" (today\'s behaviour)', () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg"><path id="bar" transform="matrix(2,0,0,3,10,20)" d="M 0,0 H -5"/></svg>';
+  const run = (geom) => applyGeometry(svg, [{ ids: ['bar'], param: 'dim', geom }], { dim: '150' }).svg;
+  const omitted = run({ op: 'stretchX', anchor: 100 });
+  assert.equal(omitted, run({ op: 'stretchX', about: 'min', anchor: 100 }));
+  // today's op scales about the local origin: a only, translation untouched.
+  assert.equal(omitted, '<svg xmlns="http://www.w3.org/2000/svg"><path id="bar" transform="matrix(3,0,0,3,10,20)" d="M 0,0 H -5"/></svg>');
+});
+
+test('unknown about and extent-less elements are reported, never thrown', () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg"><path id="a"/><path id="b" d="M 0,0 H -5"/></svg>';
+  const { svg: out, report } = applyGeometry(svg, [
+    { ids: ['a'], param: 'd', geom: { op: 'stretchX', about: 'max', anchor: 100 } },
+    { ids: ['b'], param: 'd', geom: { op: 'stretchX', about: 'middle', anchor: 100 } },
+  ], { d: '150' });
+  assert.equal(out, svg, 'failed bindings leave the svg untouched');
+  assert.equal(report[0].ok, false);
+  assert.match(report[0].reason, /no local extent/);
+  assert.equal(report[1].ok, false);
+  assert.match(report[1].reason, /unknown about/);
+});
+
 test('stretchX scales the matrix about the local origin by value/anchor', () => {
   const svg = '<svg xmlns="http://www.w3.org/2000/svg"><path id="line" transform="matrix(2,0,0,3,10,20)" d="M 0,0 H 5"/></svg>';
   const { svg: out, report } = applyGeometry(svg, [
@@ -123,6 +179,67 @@ test('L2 on real art: footprint line stretches and text stays centred', () => {
   assert.ok(Math.abs(arrow.e - (402.07027 + (3200 - 2372) * s)) < 0.05, 'far arrowhead follows the line');
   const t1481 = parseMatrix(svg.match(/<text\b[^>]*\bid="text1481"[^>]*transform="([^"]*)"/)[1]);
   assert.ok(Math.abs(t1481.e - (259.79947 + (3200 - 2372) * s / 2)) < 0.05, 'text group re-centred');
+});
+
+// ---------- real art: right-anchored cap bar of the 004 template ----------
+
+test('about:"max" on the 004 cap bar: far end stays fixed, moving end tracks', () => {
+  const base = readFileSync(join(repo, 'templates/lsb-2607-004-fhl-r00/base.clean.svg'), 'utf8');
+  // Measured from base.clean.svg: path4307 is a cap-bar edge, right-anchored —
+  // local origin at the moving rail (user x=163.09), path "M 0,0 H -27.865"
+  // extending negative to the datum rail. dim1 anchor 500.
+  const re = /<path\b[^>]*\bid="path4307"[^>]*transform="([^"]*)"/;
+  const barM = parseMatrix(base.match(re)[1]);
+  const extent = -27.865;
+  const ratio = 1000 / 500;
+  const bind = (geom) => applyGeometry(base, [{ ids: ['path4307'], param: 'dim1', geom }], { dim1: '1000' });
+  const { svg: out, report } = bind({ op: 'stretchX', about: 'max', anchor: 500 });
+  assert.equal(report[0].ok, true, JSON.stringify(report[0]));
+  const m = parseMatrix(out.match(re)[1]);
+  assert.ok(Math.abs(m.a - barM.a * ratio) < 1e-4, 'bar stretched by value ratio');
+  // pinned far end: user position of the local-min end unchanged (1e-3: the
+  // transform is re-serialised at 5 decimals)
+  const far = (mm) => mm.a * extent + mm.e;
+  assert.ok(Math.abs(far(m) - far(barM)) < 1e-3, `far end ${far(barM)} -> ${far(m)}`);
+  // tracking origin end: translation moved by a*extent*(1-ratio), i.e. the bar
+  // grew by its own extent share of the ratio
+  assert.ok(Math.abs(m.e - (barM.e + barM.a * extent * (1 - ratio))) < 1e-3, 'moving end tracks value/anchor');
+  // omitted about is today's behaviour exactly: a scales, translation untouched
+  const { svg: dflt } = bind({ op: 'stretchX', anchor: 500 });
+  const md = parseMatrix(dflt.match(re)[1]);
+  assert.ok(Math.abs(md.a - barM.a * ratio) < 1e-4);
+  assert.equal(md.e, barM.e, 'omitted about keeps the origin end pinned');
+});
+
+// ---------- editor port parity ----------
+
+test('editor inline engine applies identical geometry ops (port parity)', () => {
+  const tplHtml = readFileSync(join(repo, 'src/templates/editor.template.html'), 'utf8');
+  const script = tplHtml.match(/<script>([\s\S]*?)<\/script>/)[1];
+  const geomSrc = script.slice(script.indexOf('// L2 geometry'), script.indexOf('function render('));
+  const { applyGeometry: applyGeometryInline } = new Function(`${geomSrc}\nreturn { applyGeometry };`)();
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg">'
+    + '<path id="p1" transform="matrix(2,0,0,3,10,20)" d="M 0,0 H 5"/>'
+    + '<path id="p2" transform="matrix(1.3333333,0,0,-1.3333333,163.09173,95.326267)" d="M 0,0 H -27.865"/>'
+    + '<path id="p3" transform="matrix(1,0,0,2,5,6)" d="M 0,0 V 4"/>'
+    + '<path id="t"/></svg>';
+  const bindings = [
+    { ids: ['p1'], param: 'd', geom: { op: 'stretchX', about: 'max', anchor: 100 } },
+    { ids: ['p2'], param: 'd', geom: { op: 'stretchX', about: 'max', anchor: 500 } },
+    { ids: ['p3'], param: 'd', geom: { op: 'stretchY', about: 'max', anchor: 100 } },
+    { ids: ['p1'], param: 'd', geom: { op: 'shiftX', anchor: 100, pxPerUnit: 0.5 } },
+    { ids: ['t'], param: 'd', geom: { op: 'stretchX', anchor: 100 } },
+    { ids: ['missing'], param: 'd', geom: { op: 'stretchX', about: 'max', anchor: 100 } },
+    { ids: ['p2'], param: 'd', geom: { op: 'stretchX', about: 'middle', anchor: 500 } },
+  ];
+  for (const params of [{ d: '150' }, { d: '3,500' }, { d: 'abc' }]) {
+    const cli = applyGeometry(svg, bindings, params);
+    const ed = applyGeometryInline(svg, bindings, params);
+    // the editor report rows are a reduced port (no ratio/reasons) — the
+    // rendered svg must be identical and ok flags must match.
+    assert.equal(ed.svg, cli.svg, `svg identical for d=${params.d}`);
+    assert.deepEqual(ed.report.map((r) => r.ok), cli.report.map((r) => r.ok), `ok flags for d=${params.d}`);
+  }
 });
 
 // ---------- 1C.7 acceptance: author from one PDF, geometry tracks ----------

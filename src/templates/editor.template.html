@@ -97,18 +97,46 @@
   const parseM=(t)=>{const m=String(t||'').match(/matrix\(([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+)\)/);return m?{a:+m[1],b:+m[2],c:+m[3],d:+m[4],e:+m[5],f:+m[6]}:null;};
   const fmtN=(n)=>String(Number(n.toFixed(5)));
   const mstr=({a,b,c,d,e,f})=>`matrix(${fmtN(a)},${fmtN(b)},${fmtN(c)},${fmtN(d)},${fmtN(e)},${fmtN(f)})`;
+  // Local extent along one axis, tracked over path endpoints (curve control
+  // points do not count) — exact for the line-based art this engine binds.
+  const extent1D=(tag,axis)=>{const dm=tag.match(/\bd="([^"]*)"/);if(!dm)return null;
+    const t=dm[1].match(/[a-zA-Z]|-?(?:\d*\.)?\d+(?:[eE][-+]?\d+)?/g)||[];
+    let i=0,cmd='',x=0,y=0,ox=0,oy=0,lo=0,hi=0,started=false;
+    const read=()=>{const n=parseFloat(t[i++]);return Number.isNaN(n)?0:n;};
+    const mark=()=>{const v=axis==='x'?x:y;if(!started){lo=hi=v;started=true;}else if(v<lo)lo=v;else if(v>hi)hi=v;};
+    while(i<t.length){ if(/[a-zA-Z]/.test(t[i])){cmd=t[i++];if(cmd==='Z'||cmd==='z'){x=ox;y=oy;mark();continue;}}
+      const rel=cmd>='a'&&cmd<='z', px=rel?x:0, py=rel?y:0;
+      const up=(nx,ny)=>{x=px+nx;y=py+ny;mark();};
+      if(cmd==='M'||cmd==='m'||cmd==='L'||cmd==='l')up(read(),read());
+      else if(cmd==='H'||cmd==='h')up(read(),0);
+      else if(cmd==='V'||cmd==='v')up(0,read());
+      else if(cmd==='C'||cmd==='c'){const p=[read(),read(),read(),read(),read(),read()];up(p[4],p[5]);}
+      else if(cmd==='S'||cmd==='s'||cmd==='Q'||cmd==='q'){const p=[read(),read(),read(),read()];up(p[2],p[3]);}
+      else if(cmd==='T'||cmd==='t')up(read(),read());
+      else if(cmd==='A'||cmd==='a'){const p=[read(),read(),read(),read(),read(),read(),read()];up(p[5],p[6]);}
+      else return null; }
+    return started?{lo,hi}:null; };
   function applyGeometry(svg,bindings,params){ const report=[]; let out=svg;
     for(const b of bindings){ const v=parseFloat(String(params[b.param]??'').replace(/,/g,'')); const a0=parseFloat(String(b.geom?.anchor??'').replace(/,/g,''));
-      const op=b.geom?.op; const numOk=(n)=>Number.isFinite(n)&&n>0;
+      const op=b.geom?.op; const ab=b.geom?.about; const numOk=(n)=>Number.isFinite(n)&&n>0;
       if(!numOk(v)||!numOk(a0)||!['stretchX','stretchY','shiftX','shiftY'].includes(op)){report.push({...b,ok:false,reason:'not numeric'});continue;}
+      if(ab!==undefined&&ab!=='min'&&ab!=='max'){report.push({...b,ok:false,reason:`unknown about "${ab}"`});continue;}
       const ratio=v/a0; const ppu=parseFloat(b.geom?.pxPerUnit)||0; let ok=true;
       for(const id of b.ids||[]){ const esc=id.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'); const re=new RegExp(`<[a-zA-Z][^>]*?\\bid="${esc}"[^>]*>`);
         const mm=out.match(re); if(!mm){ok=false;continue;}
         let tag=mm[0]; const had=/\btransform="[^"]*"/.test(tag); const cur=had?tag.match(/\btransform="([^"]*)"/)[1]:null; const m=cur?parseM(cur):null;
         if(cur&&!m){ok=false;continue;}
         const base=m||{a:1,b:0,c:0,d:1,e:0,f:0};
-        const nxt=op==='stretchX'?{...base,a:base.a*ratio}:op==='stretchY'?{...base,d:base.d*ratio}
-          :op==='shiftX'?{...base,e:base.e+(v-a0)*ppu}:{...base,f:base.f+(v-a0)*ppu};
+        let nxt;
+        if(ab==='max'&&(op==='stretchX'||op==='stretchY')){
+          // pin the far end of the local extent: its user position must not move
+          const ext=extent1D(tag,op==='stretchX'?'x':'y');
+          if(!ext){ok=false;continue;}
+          const p0=Math.abs(ext.lo)>Math.abs(ext.hi)?ext.lo:ext.hi;
+          nxt=op==='stretchX'?{...base,a:base.a*ratio,e:base.e+base.a*p0*(1-ratio)}:{...base,d:base.d*ratio,f:base.f+base.d*p0*(1-ratio)};
+        } else {
+          nxt=op==='stretchX'?{...base,a:base.a*ratio}:op==='stretchY'?{...base,d:base.d*ratio}
+            :op==='shiftX'?{...base,e:base.e+(v-a0)*ppu}:{...base,f:base.f+(v-a0)*ppu}; }
         tag=had?tag.replace(/\btransform="[^"]*"/,`transform="${mstr(nxt)}"`):tag.replace(/(\bid="[^"]*")/,`$1 transform="${mstr(nxt)}"`);
         out=out.slice(0,mm.index)+tag+out.slice(mm.index+mm[0].length); }
       report.push({...b,ok}); }

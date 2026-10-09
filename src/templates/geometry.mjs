@@ -3,9 +3,17 @@
 //
 //   applyGeometry(svg, bindings, params) -> { svg, report }
 //
-// A geometry binding: { ids, param, geom: { op, anchor, pxPerUnit? } }
-//   'stretchX' | 'stretchY' : scale the element's transform matrix about its
-//       local origin by (value / anchor), so its extent follows the value.
+// A geometry binding: { ids, param, geom: { op, anchor, about?, pxPerUnit? } }
+//   'stretchX' | 'stretchY' : scale the element's transform matrix by
+//       (value / anchor), so its extent follows the value. about: "min" | "max"
+//       (optional, default "min") names which end of the element's local
+//       extent stays pinned: "min" pins the local-origin end — today's
+//       behaviour; "max" pins the far end of the drawn extent (the endpoint
+//       away from the local origin), so the origin end tracks the value. This
+//       is how right-anchored part geometry stretches: the 004 cap-bar shape
+//       has its local origin at the moving rail and its path extending
+//       negative, so scaling about the local origin would grow it the wrong
+//       way; about: "max" holds the far (datum) end while the rail end tracks.
 //       This is how a dimension line grows: in converted art the line path is
 //       local "M 0,0 H L" with a matrix whose translation sits on the datum
 //       end, so scaling stretches the line away from the datum.
@@ -42,6 +50,45 @@ function elementById(svg, id) {
   return { tag: m[0], index: m.index, length: m[0].length };
 }
 
+/** Local extent of an element along one axis ('x' | 'y'), parsed from its
+ *  d attribute and tracked over path endpoints (curve control points do not
+ *  count — exact for the line-based art this engine binds). Returns
+ *  { lo, hi } or null when the element has no d / an unsupported command. */
+function localExtent(tag, axis) {
+  const dm = tag.match(/\bd="([^"]*)"/);
+  if (!dm) return null;
+  const t = dm[1].match(/[a-zA-Z]|-?(?:\d*\.)?\d+(?:[eE][-+]?\d+)?/g) || [];
+  let i = 0, cmd = '', x = 0, y = 0, ox = 0, oy = 0, lo = 0, hi = 0, started = false;
+  const read = () => {
+    const n = parseFloat(t[i++]);
+    return Number.isNaN(n) ? 0 : n;
+  };
+  const mark = () => {
+    const v = axis === 'x' ? x : y;
+    if (!started) { lo = hi = v; started = true; }
+    else if (v < lo) lo = v;
+    else if (v > hi) hi = v;
+  };
+  while (i < t.length) {
+    if (/[a-zA-Z]/.test(t[i])) {
+      cmd = t[i++];
+      if (cmd === 'Z' || cmd === 'z') { x = ox; y = oy; mark(); continue; }
+    }
+    const rel = cmd >= 'a' && cmd <= 'z';
+    const px = rel ? x : 0, py = rel ? y : 0;
+    const up = (nx, ny) => { x = px + nx; y = py + ny; mark(); };
+    if (cmd === 'M' || cmd === 'm' || cmd === 'L' || cmd === 'l') up(read(), read());
+    else if (cmd === 'H' || cmd === 'h') up(read(), 0);
+    else if (cmd === 'V' || cmd === 'v') up(0, read());
+    else if (cmd === 'C' || cmd === 'c') { const p = [read(), read(), read(), read(), read(), read()]; up(p[4], p[5]); }
+    else if (cmd === 'S' || cmd === 's' || cmd === 'Q' || cmd === 'q') { const p = [read(), read(), read(), read()]; up(p[2], p[3]); }
+    else if (cmd === 'T' || cmd === 't') up(read(), read());
+    else if (cmd === 'A' || cmd === 'a') { const p = [read(), read(), read(), read(), read(), read(), read()]; up(p[5], p[6]); }
+    else return null; // unknown or missing command — no reliable extent
+  }
+  return started ? { lo, hi } : null;
+}
+
 /** Patch the transform attribute of one element occurrence. Returns new svg or null. */
 function patchTransform(svg, id, patch) {
   const el = elementById(svg, id);
@@ -75,13 +122,28 @@ export function applyGeometry(svg, bindings, params) {
       report.push({ ...b, ok: false, reason: `unknown op "${op}"` });
       continue;
     }
+    const about = b.geom?.about;
+    if (about !== undefined && about !== 'min' && about !== 'max') {
+      report.push({ ...b, ok: false, reason: `unknown about "${about}"` });
+      continue;
+    }
     const ratio = value / anchor;
     const pxPerUnit = num(b.geom?.pxPerUnit) ?? 0;
     let ok = true;
     const reasons = [];
     for (const id of b.ids || []) {
       let r;
-      if (op === 'stretchX') r = patchTransform(out, id, (m) => ({ ...m, a: m.a * ratio }));
+      if (about === 'max' && (op === 'stretchX' || op === 'stretchY')) {
+        // Pin the far end of the local extent: scaling the near end by the
+        // ratio must leave the far end's user position (a*p0 + e) unchanged.
+        const el = elementById(out, id);
+        const ext = el && localExtent(el.tag, op === 'stretchX' ? 'x' : 'y');
+        if (!el || !ext) { ok = false; reasons.push(`${id}: ${el ? 'no local extent' : 'id not found'}`); continue; }
+        const p0 = Math.abs(ext.lo) > Math.abs(ext.hi) ? ext.lo : ext.hi;
+        if (op === 'stretchX') r = patchTransform(out, id, (m) => ({ ...m, a: m.a * ratio, e: m.e + m.a * p0 * (1 - ratio) }));
+        else r = patchTransform(out, id, (m) => ({ ...m, d: m.d * ratio, f: m.f + m.d * p0 * (1 - ratio) }));
+      }
+      else if (op === 'stretchX') r = patchTransform(out, id, (m) => ({ ...m, a: m.a * ratio }));
       else if (op === 'stretchY') r = patchTransform(out, id, (m) => ({ ...m, d: m.d * ratio }));
       else if (op === 'shiftX') r = patchTransform(out, id, (m) => ({ ...m, e: m.e + (value - anchor) * pxPerUnit }));
       else r = patchTransform(out, id, (m) => ({ ...m, f: m.f + (value - anchor) * pxPerUnit }));
