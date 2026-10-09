@@ -233,6 +233,68 @@ test('part proposal: one element binds to at most one dimension', () => {
   assert.equal(p2.skipped, 0, 'the element claimed by dim1 is not a dim2 candidate at all');
 });
 
+// ---------- part bindings (#11): attach rule, all-or-nothing ambiguity ----------
+
+// Same dim as the span fixture (extent 250 px = 2500, s = 0.1 px/mm, datum
+// plane x=100, moving plane x=350) plus elements attached to each end.
+const attachSvg = partSvg
+  + '<path id="railBolt" transform="matrix(1,0,0,1,348,240)" d="M 0,0 h 6 v 6 z"/>'
+  + '<path id="railPlate" transform="matrix(1,0,0,1,346.5,260)" d="M 0,0 h 20 v 3 z"/>'
+  + '<path id="datumBolt" transform="matrix(1,0,0,1,94,236)" d="M 0,0 h 6 v 6 z"/>';
+const attachRows = [
+  ...partRows,
+  { id: 'railBolt', x: 348, y: 240, w: 6, h: 6 },
+  { id: 'railPlate', x: 346.5, y: 260, w: 20, h: 3 },
+  { id: 'datumBolt', x: 94, y: 236, w: 6, h: 6 },
+];
+
+test('part proposal: moving-end attachments shift at the full rate; datum-side stays unbound', () => {
+  const { bindings, parts } = proposeGeometry(attachRows, partProps, attachSvg);
+  for (const id of ['railBolt', 'railPlate']) {
+    const b = bindings.find((x) => x.ids[0] === id);
+    assert.ok(b, `${id} bound`);
+    assert.deepEqual(b.geom, { op: 'shiftX', anchor: 2500, pxPerUnit: 0.1 }, 'full rate: the dim\'s own extent/value');
+  }
+  assert.ok(!bindings.some((b) => b.ids.includes('datumBolt')), 'datum-side attachments stay unbound');
+  assert.deepEqual(parts, [{ param: 'dim1', bound: 4, skipped: 1 }], '2 spans + 2 attachments; the datum bolt is a skipped candidate');
+  // rendered behaviour: the attachment moves by (value - anchor) * pxPerUnit
+  const shift = bindings.filter((b) => b.geom.op === 'shiftX' && b.ids[0] !== 'a2' && !b.ids.includes('t1'));
+  const { svg: out } = applyGeometry(attachSvg, shift, { dim1: '3000' });
+  assert.deepEqual(parseMatrix(out.match(/<path\b[^>]*\bid="railBolt"[^>]*transform="([^"]*)"/)[1]),
+    { a: 1, b: 0, c: 0, d: 1, e: 398, f: 240 }, '(3000 - 2500) * 0.1 = 50 user units');
+  const datum = parseMatrix(out.match(/<path\b[^>]*\bid="datumBolt"[^>]*transform="([^"]*)"/)[1]);
+  assert.equal(datum.e, 94, 'datum-side element untouched by the render');
+});
+
+test('part proposal: an element overlapping both ends forfeits the whole dim (all-or-nothing)', () => {
+  const rows = [...partRows, { id: 'overlapBar', x: 70, y: 220, w: 310, h: 2 }];
+  const svg = partSvg + '<path id="overlapBar" transform="matrix(1,0,0,1,70,220)" d="M 0,0 H 310"/>';
+  const { bindings, parts } = proposeGeometry(rows, partProps, svg);
+  assert.ok(!bindings.some((b) => b.ids.includes('barL') || b.ids.includes('barR') || b.ids.includes('overlapBar')), 'nothing binds for the dim');
+  assert.deepEqual(parts, [{ param: 'dim1', bound: 0, skipped: 1, ambiguous: true }]);
+  assert.ok(bindings.some((b) => b.ids.includes('line1') && b.geom.op === 'stretchX'), 'the annotation proposal is unaffected');
+});
+
+test('part proposal: non-axis-aligned geometry in the box is ambiguous (all-or-nothing)', () => {
+  const rows = [...partRows, { id: 'tilted', x: 200, y: 300, w: 10, h: 10 }];
+  const svg = partSvg + '<path id="tilted" transform="matrix(0.7071,0.7071,-0.7071,0.7071,200,300)" d="M 0,0 H 10"/>';
+  const { bindings, parts } = proposeGeometry(rows, partProps, svg);
+  assert.ok(!bindings.some((b) => b.ids.includes('barL') || b.ids.includes('barR')), 'nothing binds for the dim');
+  assert.deepEqual(parts, [{ param: 'dim1', bound: 0, skipped: 1, ambiguous: true }]);
+});
+
+test('reportScaffold marks an ambiguous dimension "skipped: ambiguous"', () => {
+  const lines = [];
+  reportScaffold({
+    id: 'x', dir: '/tmp/x', outlines: 0, props: [], geomLines: 1, preserved: 0,
+    parts: [{ param: 'dim2', bound: 0, skipped: 1, ambiguous: true }],
+    vision: { called: false, dims: 0, rejected: 0 }, editor: 'e.html', editorMB: '0.1',
+  }, (l) => lines.push(l));
+  const row = lines.find((l) => l.includes('dim2'));
+  assert.ok(row, `expected a per-dim parts row, got:\n${lines.join('\n')}`);
+  assert.match(row, /0 bound, skipped: ambiguous/);
+});
+
 test('reportScaffold prints per-dimension part bound/skipped counts', () => {
   const lines = [];
   reportScaffold({
@@ -329,8 +391,21 @@ test('part proposal on 004 art: dim1 spans the cap bars (right-anchored, about m
     assert.equal(b.geom.anchor, 500);
   }
   const d1 = parts.find((d) => d.param === 'dim1');
-  assert.equal(d1.bound, 4, `cap bars only, got bound=${d1.bound} skipped=${d1.skipped}`);
-  assert.ok(d1.skipped >= 1, 'look-alike geometry in the box (path1476/platform edge, path1509) is counted as skipped');
+  // Measured from the art: 4 cap-bar edges span the dim, and 82 elements of
+  // the moving-end rail assembly attach to the moving plane (path4461 rail
+  // segment, path4279 bracket plate, the path20xx/21xx bolt and hatch marks,
+  // path8127-8136 rail pieces).
+  assert.equal(d1.bound, 86, `4 spans + 82 attachments, got bound=${d1.bound} skipped=${d1.skipped}`);
+  assert.ok(!d1.ambiguous);
+  assert.ok(d1.skipped >= 1, 'look-alike geometry in the box (path1476/platform edge, path1509, texts, extension lines) is counted as skipped');
+  for (const id of ['path4461', 'path4279']) {
+    const b = bindings.find((x) => x.ids.includes(id));
+    assert.ok(b, `${id} (moving-end rail assembly) bound`);
+    assert.equal(b.geom.op, 'shiftX', 'attach rule: shift at the full rate');
+    assert.equal(b.geom.pxPerUnit, 0.0799946, "the dim's own extent/value");
+    assert.equal(b.geom.anchor, 500);
+  }
+  assert.ok(!bindings.some((b) => ['path4321', 'path7808', 'path4304'].some((id) => b.ids.includes(id))), 'the datum-side rail, plate and bar ends stay unbound');
   assert.ok(!bindings.some((b) => b.ids.some((id) => RUNGS.includes(id))), 'ladder-body rungs (56.6 px vs the 40.0 px dim extent) stay unbound');
   assert.ok(!bindings.some((b) => b.ids.some((id) => ['path1476', 'path1509'].includes(id))), 'same-length geometry offset along the axis does not span THIS dim');
 });
@@ -396,13 +471,16 @@ test('1C.7 e2e: scaffold the trolley PDF -> geometry bindings -> render tracks',
   }
 });
 
-// ---------- #10 acceptance: re-scaffolded 004 binds the cap bars ----------
+// ---------- #10/#11 acceptance: re-scaffolded 004 widens the cap consistently ----------
 
-test('#10 e2e: re-scaffolded 004 template binds the cap bars; dim1=1000 widens them', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
+test('#11 e2e: re-scaffolded 004 -> dim1=1000 widens the cap; bars land on the shifted rail', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
   const tmp = mkdtempSync(join(tmpdir(), 'ladder-parts-'));
   const r = await scaffold(join(repo, 'LSB-2607-004-FHL-R00.pdf'), { llm: false, id: 'geo-004', templatesDir: tmp });
   const d1 = r.parts.find((d) => d.param === 'dim1');
-  assert.ok(d1 && d1.bound === 4, `dim1 proposes the 4 cap bars, got ${JSON.stringify(r.parts)}`);
+  // 4 cap bars span the dim; 82 elements of the moving-end rail assembly
+  // (rail segments, bracket plates, bolts) attach to the moving plane.
+  assert.ok(d1 && d1.bound === 86, `dim1 proposes the cap bars + rail assembly, got ${JSON.stringify(r.parts)}`);
+  assert.ok(!d1.ambiguous);
 
   const tpl = JSON.parse(readFileSync(join(tmp, 'geo-004', 'template.json'), 'utf8'));
   for (const id of CAP_BARS) {
@@ -415,15 +493,33 @@ test('#10 e2e: re-scaffolded 004 template binds the cap bars; dim1=1000 widens t
   }
   assert.ok(!tpl.bindings.some((b) => (b.ids || []).some((id) => RUNGS.includes(id))), 'rungs never bind');
 
+  // #11 attach rule: the moving-end rail assembly shifts at the full rate;
+  // the datum-side rail and its attachments stay unbound.
+  const RAIL_SIDE = ['path4461', 'path4279'];
+  const tagRe = (id) => new RegExp(`<[a-zA-Z][^>]*?\\bid="${id}"[^>]*transform="([^"]*)"`);
+  for (const id of RAIL_SIDE) {
+    const b = tpl.bindings.find((x) => (x.ids || []).includes(id));
+    assert.ok(b?.geom, `${id} (moving-end rail assembly) has a geom binding`);
+    assert.equal(b.param, 'dim1');
+    assert.equal(b.geom.op, 'shiftX');
+    assert.equal(b.geom.pxPerUnit, 0.0799946, "full rate: the dim's own extent/value");
+    assert.equal(b.geom.anchor, 500);
+  }
+  for (const id of ['path4321', 'path7808', 'path4304']) {
+    assert.ok(!tpl.bindings.some((b) => (b.ids || []).includes(id)), `${id} (datum side) never binds`);
+  }
+
   // render with dim1 = 1000: every cap bar doubles in width, the datum-side
-  // end stays pinned, the moving (rail) end tracks the value.
+  // end stays pinned, the moving (rail) end tracks the value, and the rail
+  // assembly shifts by (value - anchor) * pxPerUnit so the widened bars still
+  // land on it.
   const out = renderById(tmp, 'geo-004', { dim1: '1000' });
   assert.ifError(out.error);
   const clean = readFileSync(join(tmp, 'geo-004', 'base.clean.svg'), 'utf8');
+  const s = 0.0799946;
   for (const id of CAP_BARS) {
-    const re = new RegExp(`<[a-zA-Z][^>]*?\\bid="${id}"[^>]*transform="([^"]*)"`);
-    const before = parseMatrix(clean.match(re)[1]);
-    const after = parseMatrix(out.svg.match(re)[1]);
+    const before = parseMatrix(clean.match(tagRe(id))[1]);
+    const after = parseMatrix(out.svg.match(tagRe(id))[1]);
     const ratio = 1000 / 500;
     assert.ok(Math.abs(after.a - before.a * ratio) < 1e-3, `${id} widened by value ratio`);
     // local extent "M 0,0 H -27.865": the datum end is the local-min end.
@@ -432,5 +528,29 @@ test('#10 e2e: re-scaffolded 004 template binds the cap bars; dim1=1000 widens t
     assert.ok(Math.abs(after.e - (before.e + before.a * -27.865 * (1 - ratio))) < 1e-2, `${id} moving end tracks`);
     const rungRe = new RegExp(`<[a-zA-Z][^>]*?\\bid="path4324"[^>]*transform="([^"]*)"`);
     assert.equal(out.svg.match(rungRe)[1], clean.match(rungRe)[1], 'rung untouched by the render');
+  }
+  for (const id of RAIL_SIDE) {
+    const before = parseMatrix(clean.match(tagRe(id))[1]);
+    const after = parseMatrix(out.svg.match(tagRe(id))[1]);
+    assert.ok(Math.abs((after.e - before.e) - (1000 - 500) * s) < 1e-2, `${id} shifts by (value - anchor) * pxPerUnit`);
+  }
+  // the bars land on the shifted-rail position: the art insets the cap bars
+  // ~1.4px inside the rail plane, and that inset scales with the edit — the
+  // bar ends track the shifted bracket plate within the same ±10% tolerance
+  // the span rule admitted them with.
+  const bar = parseMatrix(out.svg.match(tagRe('path4307'))[1]);
+  const plate = parseMatrix(out.svg.match(tagRe('path4279'))[1]);
+  const cleanPlate = parseMatrix(clean.match(tagRe('path4279'))[1]);
+  const PLATE_NEAR = 163.385;           // path4279 bbox near edge (measured)
+  const barEnd = bar.e + 0.327;         // stroke half-width: bbox edge of the bar end
+  assert.ok(Math.abs(barEnd - (plate.e - cleanPlate.e + PLATE_NEAR)) < 5,
+    `bar end ${barEnd.toFixed(2)} lands on the shifted plate ${(plate.e - cleanPlate.e + PLATE_NEAR).toFixed(2)}`);
+
+  // the annotation reads 1000 (first glyph run of the group carries the value)
+  const ann = out.svg.match(/<text\b[^>]*?\bid="text1465"[^>]*>[\s\S]*?<\/text>/)[0];
+  assert.ok(ann.includes('>1000<'), 'the dim1 annotation reads 1000');
+  // FLATBAR callouts (labels + leader) are untouched by the whole edit
+  for (const id of ['text1510', 'text1511', 'text1512', 'text1513', 'text1514', 'text1515', 'text1516', 'path1507']) {
+    assert.equal(out.svg.match(tagRe(id))[1], clean.match(tagRe(id))[1], `${id} (FLATBAR callout) unmoved`);
   }
 });
