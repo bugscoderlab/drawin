@@ -9,14 +9,17 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { execFileSync } from 'node:child_process';
 
 import { applyGeometry, parseMatrix } from '../src/templates/geometry.mjs';
 import { renderTemplate } from '../src/templates/render.mjs';
-import { proposeGeometry, scaffold } from '../src/eval/scaffold.mjs';
+import { parseQueryAll } from '../src/templates/authoring.mjs';
+import { proposeGeometry, scaffold, reportScaffold } from '../src/eval/scaffold.mjs';
 import { renderById } from '../src/templates/renderCmd.mjs';
 import { availableConverters } from '../src/convert/convert.mjs';
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
+const tools = availableConverters();
 
 // ---------- applyGeometry units ----------
 
@@ -153,6 +156,95 @@ test('proposeGeometry skips implausible scales and claims lines once', () => {
   assert.deepEqual(proposeGeometry(rows, huge, syntheticSvg).lines, [], 's=25 px/mm rejected');
 });
 
+// ---------- part bindings (#10): span-rule proposal units ----------
+
+// One horizontal dim (line extent 250 px, value 2500) with a left-anchored
+// bar (local origin at the datum end) and a right-anchored bar (local origin
+// at the moving end, path extending negative — the 004 cap-bar shape).
+const partSvg = '<svg xmlns="http://www.w3.org/2000/svg">'
+  + '<path id="line1" transform="matrix(1,0,0,1,100,200)" d="M 0,0 H 250"/>'
+  + '<path id="a1" d="M 0,0 l 8,2 -8,2 z" transform="matrix(1,0,0,1,96,198)"/>'
+  + '<path id="a2" d="M 0,0 l -8,2 8,2 z" transform="matrix(1,0,0,1,350,198)"/>'
+  + '<path id="barL" transform="matrix(1,0,0,1,98,220)" d="M 0,0 H 246"/>'
+  + '<path id="barR" transform="matrix(1,0,0,1,352,230)" d="M 0,0 H -246"/>'
+  + '</svg>';
+const partRows = [
+  { id: 'line1', x: 100, y: 200, w: 250, h: 0.5 },
+  { id: 'a1', x: 96, y: 198, w: 8, h: 4 },
+  { id: 'a2', x: 346, y: 198, w: 8, h: 4 },
+  { id: 'barL', x: 98, y: 220, w: 246, h: 1 },
+  { id: 'barR', x: 106, y: 230, w: 246, h: 1 },
+];
+const partProps = [{ id: 'dim1', value: '2500', geom: { vertical: false, glyphs: [{ id: 't1', x: 205, y: 196 }, { id: 't2', x: 213, y: 196 }] } }];
+
+test('part proposal: elements spanning the dim extent become stretch bindings, about on the datum side', () => {
+  const { bindings, parts } = proposeGeometry(partRows, partProps, partSvg);
+  const barL = bindings.find((b) => b.ids[0] === 'barL');
+  const barR = bindings.find((b) => b.ids[0] === 'barR');
+  assert.deepEqual(barL.geom, { op: 'stretchX', about: 'min', anchor: 2500 }, 'origin end sits at the datum plane -> min stays put');
+  assert.deepEqual(barR.geom, { op: 'stretchX', about: 'max', anchor: 2500 }, 'origin end at the moving rail -> the far (datum) end stays put');
+  assert.deepEqual(parts, [{ param: 'dim1', bound: 2, skipped: 0 }]);
+});
+
+test('part proposal: the dim-line cluster is never re-classified as a part', () => {
+  const { bindings } = proposeGeometry(partRows, partProps, partSvg);
+  assert.equal(bindings.filter((b) => b.ids.includes('line1')).length, 1, 'the dim line binds exactly once (its annotation stretch)');
+  const t1 = bindings.filter((b) => b.ids.includes('t1'));
+  assert.equal(t1.length, 1, 'a text glyph binds exactly once (its annotation shift)');
+  assert.match(t1[0].geom.op, /^shift/);
+  assert.ok(!bindings.some((b) => b.ids.includes('a1')), 'the datum-end arrowhead stays unbound, as today');
+  assert.ok(!bindings.some((b) => b.geom.op.startsWith('stretch') && b.ids.some((id) => ['a1', 'a2', 't1', 't2'].includes(id))), 'no cluster element gets a stretch part binding');
+});
+
+test('part proposal: matching geometry outside the locality box is ignored', () => {
+  const rows = [...partRows, { id: 'barFar', x: 100 + 2.6 * 250, y: 220, w: 246, h: 1 }];
+  const svg = partSvg + '<path id="barFar" transform="matrix(1,0,0,1,1000,220)" d="M 0,0 H -246"/>';
+  const { bindings, parts } = proposeGeometry(rows, partProps, svg);
+  assert.ok(!bindings.some((b) => b.ids.includes('barFar')), 'same span, 2.6 dim extents away -> not a part of this dim');
+  assert.deepEqual(parts, [{ param: 'dim1', bound: 2, skipped: 0 }], 'outside the box it is not even a skipped candidate');
+});
+
+test('part proposal: one element binds to at most one dimension', () => {
+  // dim2 measures the same extent further down; both locality boxes contain
+  // the shared bar (centre 300: dim1 box reaches 450, dim2 box reaches 50).
+  const rows = [
+    ...partRows,
+    { id: 'line2', x: 100, y: 400, w: 250, h: 0.5 },
+    { id: 'b1', x: 96, y: 398, w: 8, h: 4 },
+    { id: 'b2', x: 346, y: 398, w: 8, h: 4 },
+    { id: 'bar2', x: 98, y: 620, w: 246, h: 1 },
+    { id: 'shared', x: 98, y: 300, w: 246, h: 1 },
+  ];
+  const svg = partSvg
+    + '<path id="line2" transform="matrix(1,0,0,1,100,400)" d="M 0,0 H 250"/>'
+    + '<path id="b1" d="M 0,0 l 8,2 -8,2 z" transform="matrix(1,0,0,1,96,398)"/>'
+    + '<path id="b2" d="M 0,0 l -8,2 8,2 z" transform="matrix(1,0,0,1,350,398)"/>'
+    + '<path id="bar2" transform="matrix(1,0,0,1,98,620)" d="M 0,0 H 246"/>'
+    + '<path id="shared" transform="matrix(1,0,0,1,98,300)" d="M 0,0 H 246"/>';
+  const props = [...partProps, { id: 'dim2', value: '2500', geom: { vertical: false, glyphs: [{ id: 'u1', x: 205, y: 396 }, { id: 'u2', x: 213, y: 396 }] } }];
+  const { bindings, lines, parts } = proposeGeometry(rows, props, svg);
+  assert.deepEqual(lines, ['dim1', 'dim2'], 'both annotations still bind');
+  const shared = bindings.filter((b) => b.ids.includes('shared'));
+  assert.equal(shared.length, 1, 'the shared element binds exactly once');
+  assert.equal(shared[0].param, 'dim1', 'first-come dimension wins');
+  assert.ok(bindings.some((b) => b.ids.includes('bar2') && b.param === 'dim2'), 'dim2 still binds its own bar');
+  const p2 = parts.find((d) => d.param === 'dim2');
+  assert.equal(p2.bound, 1);
+  assert.equal(p2.skipped, 0, 'the element claimed by dim1 is not a dim2 candidate at all');
+});
+
+test('reportScaffold prints per-dimension part bound/skipped counts', () => {
+  const lines = [];
+  reportScaffold({
+    id: 'x', dir: '/tmp/x', outlines: 0, props: [], geomLines: 1, preserved: 0,
+    parts: [{ param: 'dim1', bound: 4, skipped: 2 }],
+    vision: { called: false, dims: 0, rejected: 0 }, editor: 'e.html', editorMB: '0.1',
+  }, (l) => lines.push(l));
+  const row = lines.find((l) => l.includes('dim1') && l.includes('bound'));
+  assert.ok(row, `expected a per-dim parts row, got:\n${lines.join('\n')}`);
+  assert.match(row, /4 bound, 2 skipped/);
+});
+
 // ---------- real art: the footprint dimension of the trolley template ----------
 
 test('L2 on real art: footprint line stretches and text stays centred', () => {
@@ -211,6 +303,38 @@ test('about:"max" on the 004 cap bar: far end stays fixed, moving end tracks', (
   assert.equal(md.e, barM.e, 'omitted about keeps the origin end pinned');
 });
 
+// ---------- #10 real art: dim1 of 004 binds the cap bars, not the rungs ----------
+
+const CAP_BARS = ['path4307', 'path4308', 'path4309', 'path4310'];
+const RUNGS = ['path4324', 'path4325', 'path4328', 'path4329'];
+
+test('part proposal on 004 art: dim1 spans the cap bars (right-anchored, about max) and leaves the rungs', { skip: !tools.includes('inkscape') && 'requires inkscape' }, () => {
+  const dir = join(repo, 'templates/lsb-2607-004-fhl-r00');
+  const base = readFileSync(join(dir, 'base.clean.svg'), 'utf8');
+  const rows = parseQueryAll(execFileSync('inkscape', ['--query-all', join(dir, 'base.clean.svg')], { encoding: 'utf8', maxBuffer: 1 << 28 }));
+  // Measured from base.clean.svg: dim1 line is path1463 (extent 39.9973 px for
+  // 500 mm, left-anchored at x=124.517); its text is text1465…text1470.
+  const props = [{ id: 'dim1', value: '500', geom: { vertical: false, glyphs: [
+    { id: 'text1465', x: 127.806, y: 72.4074 }, { id: 'text1466', x: 134.327, y: 72.3315 },
+    { id: 'text1467', x: 140.856, y: 72.3315 }, { id: 'text1468', x: 147.444, y: 76.7074 },
+    { id: 'text1469', x: 150.913, y: 72.3315 }, { id: 'text1470', x: 157.44, y: 72.3315 },
+  ] } }];
+  const { bindings, parts } = proposeGeometry(rows, props, base);
+  for (const id of CAP_BARS) {
+    const b = bindings.find((x) => x.ids.includes(id));
+    assert.ok(b, `${id} bound`);
+    assert.equal(b.param, 'dim1');
+    assert.equal(b.geom.op, 'stretchX');
+    assert.equal(b.geom.about, 'max', `${id} is right-anchored: the far (datum) end stays put`);
+    assert.equal(b.geom.anchor, 500);
+  }
+  const d1 = parts.find((d) => d.param === 'dim1');
+  assert.equal(d1.bound, 4, `cap bars only, got bound=${d1.bound} skipped=${d1.skipped}`);
+  assert.ok(d1.skipped >= 1, 'look-alike geometry in the box (path1476/platform edge, path1509) is counted as skipped');
+  assert.ok(!bindings.some((b) => b.ids.some((id) => RUNGS.includes(id))), 'ladder-body rungs (56.6 px vs the 40.0 px dim extent) stay unbound');
+  assert.ok(!bindings.some((b) => b.ids.some((id) => ['path1476', 'path1509'].includes(id))), 'same-length geometry offset along the axis does not span THIS dim');
+});
+
 // ---------- editor port parity ----------
 
 test('editor inline engine applies identical geometry ops (port parity)', () => {
@@ -244,7 +368,6 @@ test('editor inline engine applies identical geometry ops (port parity)', () => 
 
 // ---------- 1C.7 acceptance: author from one PDF, geometry tracks ----------
 
-const tools = availableConverters();
 test('1C.7 e2e: scaffold the trolley PDF -> geometry bindings -> render tracks', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
   const tmp = mkdtempSync(join(tmpdir(), 'ladder-geom-'));
   const r = await scaffold(join(repo, 'LSB-2607-003-RHC-R00.pdf'), { llm: false, id: 'geo-trolley', templatesDir: tmp });
@@ -270,5 +393,44 @@ test('1C.7 e2e: scaffold the trolley PDF -> geometry bindings -> render tracks',
       assert.ok(Math.abs(after[axis] - before[axis] * ratio) < Math.abs(before[axis] * ratio) * 0.01 + 1e-4,
         `${id} ${b.geom.op}: ${before[axis]} -> ${after[axis]}, expected ~${before[axis] * ratio}`);
     }
+  }
+});
+
+// ---------- #10 acceptance: re-scaffolded 004 binds the cap bars ----------
+
+test('#10 e2e: re-scaffolded 004 template binds the cap bars; dim1=1000 widens them', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'ladder-parts-'));
+  const r = await scaffold(join(repo, 'LSB-2607-004-FHL-R00.pdf'), { llm: false, id: 'geo-004', templatesDir: tmp });
+  const d1 = r.parts.find((d) => d.param === 'dim1');
+  assert.ok(d1 && d1.bound === 4, `dim1 proposes the 4 cap bars, got ${JSON.stringify(r.parts)}`);
+
+  const tpl = JSON.parse(readFileSync(join(tmp, 'geo-004', 'template.json'), 'utf8'));
+  for (const id of CAP_BARS) {
+    const b = tpl.bindings.find((x) => (x.ids || []).includes(id));
+    assert.ok(b?.geom, `${id} has a geom binding`);
+    assert.equal(b.param, 'dim1');
+    assert.equal(b.geom.op, 'stretchX');
+    assert.equal(b.geom.about, 'max', 'right-anchored bars pin the datum-side far end');
+    assert.equal(b.geom.anchor, 500);
+  }
+  assert.ok(!tpl.bindings.some((b) => (b.ids || []).some((id) => RUNGS.includes(id))), 'rungs never bind');
+
+  // render with dim1 = 1000: every cap bar doubles in width, the datum-side
+  // end stays pinned, the moving (rail) end tracks the value.
+  const out = renderById(tmp, 'geo-004', { dim1: '1000' });
+  assert.ifError(out.error);
+  const clean = readFileSync(join(tmp, 'geo-004', 'base.clean.svg'), 'utf8');
+  for (const id of CAP_BARS) {
+    const re = new RegExp(`<[a-zA-Z][^>]*?\\bid="${id}"[^>]*transform="([^"]*)"`);
+    const before = parseMatrix(clean.match(re)[1]);
+    const after = parseMatrix(out.svg.match(re)[1]);
+    const ratio = 1000 / 500;
+    assert.ok(Math.abs(after.a - before.a * ratio) < 1e-3, `${id} widened by value ratio`);
+    // local extent "M 0,0 H -27.865": the datum end is the local-min end.
+    const far = (m) => m.a * -27.865 + m.e;
+    assert.ok(Math.abs(far(after) - far(before)) < 1e-2, `${id} datum end stays pinned`);
+    assert.ok(Math.abs(after.e - (before.e + before.a * -27.865 * (1 - ratio))) < 1e-2, `${id} moving end tracks`);
+    const rungRe = new RegExp(`<[a-zA-Z][^>]*?\\bid="path4324"[^>]*transform="([^"]*)"`);
+    assert.equal(out.svg.match(rungRe)[1], clean.match(rungRe)[1], 'rung untouched by the render');
   }
 });

@@ -131,7 +131,13 @@ function propose(runs, pageH) {
  * shop drawings are frequently not uniformly scaled, so no cross-dim
  * consensus is needed or wanted. Conservative: any doubt -> no binding.
  *
- *   proposeGeometry(rows, props, svg) -> { bindings, lines: [paramId] }
+ * The pass runs in three stages so the exclusion rules hold without ordering
+ * tricks: (1) recognise every dim's line, (2) emit the annotation bindings
+ * (line, arrowhead, text) and claim the whole cluster, (3) run the
+ * part-proposal stage against the claimed set, so a dim line is never
+ * re-classified as a part and no element binds twice (#10).
+ *
+ *   proposeGeometry(rows, props, svg) -> { bindings, lines: [paramId], parts: [{ param, bound, skipped }] }
  */
 export function proposeGeometry(rows, props, svg = '') {
   const num = (v) => { const n = parseFloat(String(v).replace(/,/g, '')); return Number.isNaN(n) ? null : n; };
@@ -149,9 +155,11 @@ export function proposeGeometry(rows, props, svg = '') {
     const m = svg.match(new RegExp(`<[a-zA-Z][^>]*?\\bid="${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*?\\btransform="([^"]*)"`));
     return m ? m[1] : null;
   };
+  const matrixOf = (id) => transformOf(id)?.match(/matrix\(([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+)\)/);
 
-  const bindings = [], lines = [];
+  // Stage 1: recognise each dim's dimension line (claimed keeps lines unique).
   const claimed = new Set();
+  const recs = [];
   for (const p of props) {
     const g = p.geom;
     const v = g && num(p.value);
@@ -178,25 +186,106 @@ export function proposeGeometry(rows, props, svg = '') {
     const s = extent / v;                    // px per mm, self-calibrated
     if (s < 0.005 || s > 2) continue;        // not a believable scale -> skip
     claimed.add(line.id);
-
-    const axis = vertical ? 'Y' : 'X';
-    const out = [{ ids: [line.id], param: p.id, geom: { op: `stretch${axis}`, anchor: v } }];
     // The matrix translation sits on the datum (fixed) end of the line; the
     // arrowhead at the OTHER end moves with the stretched line.
-    const m = transformOf(line.id)?.match(/matrix\(([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+)\)/);
+    const ends = endsOf(line, vertical);
+    const m = matrixOf(line.id);
+    let datum = ends[0], moving = null;
     if (m) {
       const oe = +m[5], of = +m[6];
-      const ends = endsOf(line, vertical);
       const dFix = Math.min(Math.hypot(ends[0].x - oe, ends[0].y - of), Math.hypot(ends[1].x - oe, ends[1].y - of));
-      const moving = ends.find((e) => Math.hypot(e.x - oe, e.y - of) > dFix + 1);
-      const arrow = moving && arrowAt(moving);
-      if (arrow) out.push({ ids: [arrow.id], param: p.id, geom: { op: `shift${axis}`, anchor: v, pxPerUnit: s } });
+      moving = ends.find((e) => Math.hypot(e.x - oe, e.y - of) > dFix + 1) || null;
+      if (moving) datum = ends.find((e) => e !== moving);
     }
-    out.push({ ids: g.glyphs.map((x) => x.id).filter(Boolean), param: p.id, geom: { op: `shift${axis}`, anchor: v, pxPerUnit: s / 2 } });
-    bindings.push(...out);
-    lines.push(p.id);
+    recs.push({ p, line, extent, s, vertical, datum, moving });
   }
-  return { bindings, lines };
+
+  // Stage 2: annotation bindings — the line stretches, the moving-end
+  // arrowhead and the text centre shift. The whole cluster (both arrowheads
+  // included) joins the claimed set so stage 3 never re-classifies it.
+  const bindings = [];
+  for (const r of recs) {
+    const { p, line, s, vertical, moving } = r;
+    const v = num(p.value);
+    const axis = vertical ? 'Y' : 'X';
+    bindings.push({ ids: [line.id], param: p.id, geom: { op: `stretch${axis}`, anchor: v } });
+    const ends = endsOf(line, vertical);
+    for (const e of ends) { const a = arrowAt(e); if (a) claimed.add(a.id); }
+    const arrow = moving && arrowAt(moving);
+    if (arrow) bindings.push({ ids: [arrow.id], param: p.id, geom: { op: `shift${axis}`, anchor: v, pxPerUnit: s } });
+    const g = p.geom;
+    for (const gl of g.glyphs.map((x) => x.id).filter(Boolean)) claimed.add(gl);
+    bindings.push({ ids: g.glyphs.map((x) => x.id).filter(Boolean), param: p.id, geom: { op: `shift${axis}`, anchor: v, pxPerUnit: s / 2 } });
+  }
+
+  // Stage 3: part bindings — the geometry the dimension measures (spec #8).
+  const parts = [];
+  for (const r of recs) {
+    const pr = proposeParts(usable, claimed, r, matrixOf);
+    bindings.push(...pr.bindings);
+    parts.push({ param: r.p.id, bound: pr.bound, skipped: pr.skipped });
+  }
+  return { bindings, lines: recs.map((r) => r.p.id), parts };
+}
+
+// Locality guard (spec #8): only elements near the dim line's own view are
+// part candidates. The box around the dim line spans ±2× the dim extent on
+// the measured axis and ±1× on the cross axis (constants locked in
+// test/geometry.test.js).
+const LOCALITY = { along: 2, cross: 1 };
+// Span rule tolerance: measured-axis extent and end positions must match the
+// dim within ±10% of the dim extent.
+const SPAN_TOL = 0.10;
+
+/** Part-proposal stage (spec #8, ticket #10): for a dimension whose
+ *  annotation bound, classify the axis-aligned elements inside the locality
+ *  box. Span rule: an element whose measured-axis extent matches the dim
+ *  extent (±SPAN_TOL) with both ends on the dim's end planes becomes a
+ *  stretch part binding; the `about` end is the datum side of the element's
+ *  local extent. Ticket #11 adds the attach rule and the all-or-nothing
+ *  ambiguity skip here — the per-dim { bound, skipped } return shape is what
+ *  the report prints, so a #11 ambiguity clears `bindings` without touching
+ *  the callers.
+ *
+ *  One element binds to at most one dimension: candidates come from the
+ *  shared `claimed` set and every bound id joins it. */
+function proposeParts(usable, claimed, { p, line, extent, vertical, datum }, matrixOf) {
+  const v = parseFloat(String(p.value).replace(/,/g, ''));
+  const axis = vertical ? 'y' : 'x';
+  const cross = vertical ? 'x' : 'y';
+  const lineLen = { x: line.w, y: line.h };
+  const lineMid = { x: line.x + line.w / 2, y: line.y + line.h / 2 };
+  const d0 = line[axis];
+  const d1 = d0 + lineLen[axis];
+  const datumC = datum[axis];
+  const halfA = lineLen[axis] / 2 + LOCALITY.along * extent;
+  const halfC = lineLen[cross] / 2 + LOCALITY.cross * extent;
+  const tol = SPAN_TOL * extent;
+
+  const len = (r, a) => (a === 'y' ? r.h : r.w);
+  const mid = (r, a) => r[a] + len(r, a) / 2;
+  const bindings = [];
+  let bound = 0, skipped = 0;
+  for (const r of usable) {
+    if (claimed.has(r.id)) continue;
+    if (Math.abs(mid(r, axis) - lineMid[axis]) > halfA || Math.abs(mid(r, cross) - lineMid[cross]) > halfC) continue;  // locality guard
+    const r0 = r[axis], r1 = r0 + len(r, axis);
+    if (Math.abs(r1 - r0 - extent) > tol || Math.abs(r0 - d0) > tol || Math.abs(r1 - d1) > tol) { skipped++; continue; }  // span rule
+    // The pinned end is the datum side of the element's local extent. The
+    // engine's "min" pins the local-origin end (its user position is the
+    // matrix translation); "max" pins the far end. So: origin end on the
+    // datum plane -> "min", otherwise "max" (the 004 cap bars: origin at the
+    // moving rail, path extending negative to the datum rail).
+    const m = matrixOf(r.id);
+    const o = m ? (axis === 'x' ? +m[5] : +m[6]) : r0;
+    const oEnd = Math.abs(o - r0) <= Math.abs(o - r1) ? 'min' : 'max';
+    const dEnd = Math.abs(datumC - r0) <= Math.abs(datumC - r1) ? 'min' : 'max';
+    const about = oEnd === dEnd ? 'min' : 'max';
+    bindings.push({ ids: [r.id], param: p.id, geom: { op: `stretch${axis.toUpperCase()}`, about, anchor: v } });
+    claimed.add(r.id);
+    bound++;
+  }
+  return { bindings, bound, skipped };
 }
 
 /** Dim geometry in LLM-facing form: measure axis, text position, glyph span. */
@@ -410,10 +499,12 @@ export async function scaffold(pdf, opts = {}) {
   };
   // L2 geometry: dim lines (with their arrowheads and text centres) track the value.
   let geomLines = 0;
+  let parts = [];
   if (rows.length) {
     const g = proposeGeometry(rows, props, clean);
     tpl.bindings.push(...g.bindings);
     geomLines = g.lines.length;
+    parts = g.parts;
   }
   // hand-made id-bindings carried over from the prior template (issue #3)
   tpl.bindings.push(...prevIdBindings);
@@ -422,7 +513,7 @@ export async function scaffold(pdf, opts = {}) {
   // 4. editor
   const ed = buildEditor(dir, { previewDir: opts.previewDir || join(resolve(opts.templatesDir || 'templates'), '..', 'preview') });
 
-  return { id, dir, outlines, props, llmFormulas, geomLines, preserved: prevIdBindings.length, vision, editor: ed.out, editorMB: (ed.bytes / 1e6).toFixed(1) };
+  return { id, dir, outlines, props, llmFormulas, geomLines, parts, preserved: prevIdBindings.length, vision, editor: ed.out, editorMB: (ed.bytes / 1e6).toFixed(1) };
 }
 
 /** Human-readable scaffold summary — the single reporting path for both
@@ -435,6 +526,10 @@ export function reportScaffold(r, log = console.log) {
   log(`  proposed  : ${r.props.length} binding(s)`);
   for (const p of r.props) log(`     ${p.id.padEnd(12)} ${p.mode.padEnd(6)} ${JSON.stringify(p.value)}`);
   if (r.geomLines) log(`  geometry  : ${r.geomLines} dimension line(s) track their value`);
+  if (r.parts?.length) {
+    log(`  parts     : ${r.parts.length} dimension(s) propose part bindings`);
+    for (const d of r.parts) log(`     ${d.param.padEnd(12)} ${d.bound} bound, ${d.skipped} skipped`);
+  }
   if (r.preserved) log(`  preserved : ${r.preserved} hand-made id-binding(s) kept`);
   if (r.vision.called) log(`  vision    : ${r.vision.dims} dim(s) recovered, ${r.vision.rejected} rejected by the plausibility check`);
   log(`  editor    : ${r.editor}  (${r.editorMB} MB)`);
