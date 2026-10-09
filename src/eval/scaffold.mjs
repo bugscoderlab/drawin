@@ -137,7 +137,7 @@ function propose(runs, pageH) {
  * part-proposal stage against the claimed set, so a dim line is never
  * re-classified as a part and no element binds twice (#10).
  *
- *   proposeGeometry(rows, props, svg) -> { bindings, lines: [paramId], parts: [{ param, bound, skipped }] }
+ *   proposeGeometry(rows, props, svg) -> { bindings, lines: [paramId], parts: [{ param, bound, skipped, ambiguous? }] }
  */
 export function proposeGeometry(rows, props, svg = '') {
   const num = (v) => { const n = parseFloat(String(v).replace(/,/g, '')); return Number.isNaN(n) ? null : n; };
@@ -223,7 +223,7 @@ export function proposeGeometry(rows, props, svg = '') {
   for (const r of recs) {
     const pr = proposeParts(usable, claimed, r, matrixOf);
     bindings.push(...pr.bindings);
-    parts.push({ param: r.p.id, bound: pr.bound, skipped: pr.skipped });
+    parts.push({ param: r.p.id, bound: pr.bound, skipped: pr.skipped, ...(pr.ambiguous ? { ambiguous: true } : {}) });
   }
   return { bindings, lines: recs.map((r) => r.p.id), parts };
 }
@@ -237,19 +237,27 @@ const LOCALITY = { along: 2, cross: 1 };
 // dim within ±10% of the dim extent.
 const SPAN_TOL = 0.10;
 
-/** Part-proposal stage (spec #8, ticket #10): for a dimension whose
+/** Part-proposal stage (spec #8, tickets #10/#11): for a dimension whose
  *  annotation bound, classify the axis-aligned elements inside the locality
- *  box. Span rule: an element whose measured-axis extent matches the dim
- *  extent (±SPAN_TOL) with both ends on the dim's end planes becomes a
+ *  box. Span rule (#10): an element whose measured-axis extent matches the
+ *  dim extent (±SPAN_TOL) with both ends on the dim's end planes becomes a
  *  stretch part binding; the `about` end is the datum side of the element's
- *  local extent. Ticket #11 adds the attach rule and the all-or-nothing
- *  ambiguity skip here — the per-dim { bound, skipped } return shape is what
- *  the report prints, so a #11 ambiguity clears `bindings` without touching
- *  the callers.
+ *  local extent. Attach rule (#11): an element wholly on the moving side of
+ *  the datum plane with its near edge on the moving-end plane (±tol) — the
+ *  far rail, its bolts and brackets — becomes a shift part binding at the
+ *  full rate (the dim's own extent/value). Elements attached to the datum
+ *  end stay unbound, as do candidates matching no rule (counted skipped).
+ *
+ *  All-or-nothing (#11): an element that overlaps BOTH end planes without
+ *  matching the span rule, or whose transform is not axis-aligned, makes the
+ *  WHOLE dimension's part proposal ambiguous — every binding proposed for it
+ *  is dropped, its claims released, and the dim reports `ambiguous: true`
+ *  ("skipped: ambiguous" in the report). A half-moved assembly is worse than
+ *  an honestly unedited one.
  *
  *  One element binds to at most one dimension: candidates come from the
  *  shared `claimed` set and every bound id joins it. */
-function proposeParts(usable, claimed, { p, line, extent, vertical, datum }, matrixOf) {
+function proposeParts(usable, claimed, { p, line, extent, vertical, datum, moving }, matrixOf) {
   const v = parseFloat(String(p.value).replace(/,/g, ''));
   const axis = vertical ? 'y' : 'x';
   const cross = vertical ? 'x' : 'y';
@@ -258,32 +266,55 @@ function proposeParts(usable, claimed, { p, line, extent, vertical, datum }, mat
   const d0 = line[axis];
   const d1 = d0 + lineLen[axis];
   const datumC = datum[axis];
+  const movingC = moving && moving[axis];
+  const dir = movingC === null || movingC === undefined ? 1 : Math.sign(movingC - datumC) || 1;
   const halfA = lineLen[axis] / 2 + LOCALITY.along * extent;
   const halfC = lineLen[cross] / 2 + LOCALITY.cross * extent;
   const tol = SPAN_TOL * extent;
+  const s = extent / v;                    // full rate: the dim's own px/mm
 
   const len = (r, a) => (a === 'y' ? r.h : r.w);
   const mid = (r, a) => r[a] + len(r, a) / 2;
   const bindings = [];
-  let bound = 0, skipped = 0;
+  let bound = 0, skipped = 0, ambiguous = false;
   for (const r of usable) {
     if (claimed.has(r.id)) continue;
     if (Math.abs(mid(r, axis) - lineMid[axis]) > halfA || Math.abs(mid(r, cross) - lineMid[cross]) > halfC) continue;  // locality guard
-    const r0 = r[axis], r1 = r0 + len(r, axis);
-    if (Math.abs(r1 - r0 - extent) > tol || Math.abs(r0 - d0) > tol || Math.abs(r1 - d1) > tol) { skipped++; continue; }  // span rule
-    // The pinned end is the datum side of the element's local extent. The
-    // engine's "min" pins the local-origin end (its user position is the
-    // matrix translation); "max" pins the far end. So: origin end on the
-    // datum plane -> "min", otherwise "max" (the 004 cap bars: origin at the
-    // moving rail, path extending negative to the datum rail).
     const m = matrixOf(r.id);
-    const o = m ? (axis === 'x' ? +m[5] : +m[6]) : r0;
-    const oEnd = Math.abs(o - r0) <= Math.abs(o - r1) ? 'min' : 'max';
-    const dEnd = Math.abs(datumC - r0) <= Math.abs(datumC - r1) ? 'min' : 'max';
-    const about = oEnd === dEnd ? 'min' : 'max';
-    bindings.push({ ids: [r.id], param: p.id, geom: { op: `stretch${axis.toUpperCase()}`, about, anchor: v } });
-    claimed.add(r.id);
-    bound++;
+    if (m && (Math.abs(+m[2]) > 1e-6 || Math.abs(+m[3]) > 1e-6)) { ambiguous = true; skipped++; continue; }  // non-axis-aligned
+    const r0 = r[axis], r1 = r0 + len(r, axis);
+    if (Math.abs(r1 - r0 - extent) <= tol && Math.abs(r0 - d0) <= tol && Math.abs(r1 - d1) <= tol) {
+      // Span rule. The pinned end is the datum side of the element's local
+      // extent. The engine's "min" pins the local-origin end (its user
+      // position is the matrix translation); "max" pins the far end. So:
+      // origin end on the datum plane -> "min", otherwise "max" (the 004 cap
+      // bars: origin at the moving rail, path extending negative to the
+      // datum rail).
+      const o = m ? (axis === 'x' ? +m[5] : +m[6]) : r0;
+      const oEnd = Math.abs(o - r0) <= Math.abs(o - r1) ? 'min' : 'max';
+      const dEnd = Math.abs(datumC - r0) <= Math.abs(datumC - r1) ? 'min' : 'max';
+      const about = oEnd === dEnd ? 'min' : 'max';
+      bindings.push({ ids: [r.id], param: p.id, geom: { op: `stretch${axis.toUpperCase()}`, about, anchor: v } });
+      claimed.add(r.id);
+      bound++;
+      continue;
+    }
+    if (moving && Math.abs((dir > 0 ? r0 : r1) - movingC) <= tol && (dir > 0 ? r1 : r0) * dir >= datumC * dir) {
+      // Attach rule: the element's datum-facing edge sits on the moving-end
+      // plane and the whole element lies on the moving side — the rail
+      // assembly follows the moving end at the full rate.
+      bindings.push({ ids: [r.id], param: p.id, geom: { op: `shift${axis.toUpperCase()}`, anchor: v, pxPerUnit: s } });
+      claimed.add(r.id);
+      bound++;
+      continue;
+    }
+    skipped++;
+    if (r0 <= d0 + tol && r1 >= d1 - tol) ambiguous = true;   // overlaps both end planes
+  }
+  // All-or-nothing: one unclassifiable element forfeits the whole dimension.
+  if (ambiguous) {
+    for (const b of bindings) claimed.delete(b.ids[0]);
+    return { bindings: [], bound: 0, skipped, ambiguous: true };
   }
   return { bindings, bound, skipped };
 }
@@ -528,7 +559,7 @@ export function reportScaffold(r, log = console.log) {
   if (r.geomLines) log(`  geometry  : ${r.geomLines} dimension line(s) track their value`);
   if (r.parts?.length) {
     log(`  parts     : ${r.parts.length} dimension(s) propose part bindings`);
-    for (const d of r.parts) log(`     ${d.param.padEnd(12)} ${d.bound} bound, ${d.skipped} skipped`);
+    for (const d of r.parts) log(`     ${d.param.padEnd(12)} ${d.ambiguous ? `${d.bound} bound, skipped: ambiguous` : `${d.bound} bound, ${d.skipped} skipped`}`);
   }
   if (r.preserved) log(`  preserved : ${r.preserved} hand-made id-binding(s) kept`);
   if (r.vision.called) log(`  vision    : ${r.vision.dims} dim(s) recovered, ${r.vision.rejected} rejected by the plausibility check`);
