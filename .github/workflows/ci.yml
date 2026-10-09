@@ -63,4 +63,8 @@ jobs:
             cd ~/drawin
             git pull --ff-only
             docker compose up -d --build
+            # Self-heal volume ownership: templates written by older containers
+            # that ran as root are root-owned; the USER node app then gets
+            # EACCES reading/writing them (e.g. base.clean.svg on /bind).
+            docker exec -u root "$(docker compose ps -q app)" chown -R node:node /app/templates /app/preview
             docker image prune -f
