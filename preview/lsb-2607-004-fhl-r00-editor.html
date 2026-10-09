@@ -68,7 +68,7 @@
    width="793.76001"
    height="1122.5601"
    viewBox="0 0 793.76001 1122.5601"
-   sodipodi:docname="LSB-2607-004-FHL-R00.pdf"
+   sodipodi:docname="ladder-upload-1791510925507-LSB-2607-004-FHL-R00.pdf"
    xmlns:inkscape="http://www.inkscape.org/namespaces/inkscape"
    xmlns:sodipodi="http://sodipodi.sourceforge.net/DTD/sodipodi-0.dtd"
    xmlns:xlink="http://www.w3.org/1999/xlink"
@@ -108119,6 +108119,7 @@
 
   const pc=document.getElementById('params');
   for(const p of tpl.params){ const l=document.createElement('label'); l.textContent=p.label||p.id;
+    if(p.unverified){ const b=document.createElement('span'); b.className='badge'; b.style.cssText='background:#fdf3e3;color:#8a5a00'; b.textContent='unverified'; l.append(' ',b); }
     const i=document.createElement('input'); i.type='text'; i.value=p.default??''; i.dataset.id=p.id;
     if(p.formula){ i.readOnly=true; i.title='computed: '+p.formula; derived[p.id]=i; }
     i.addEventListener('input',renderNow); paramEls[p.id]=i; pc.appendChild(l); pc.appendChild(i); }

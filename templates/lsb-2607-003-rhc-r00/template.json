@@ -53,25 +53,43 @@
       "id": "dim4",
       "label": "Dimension 4",
       "type": "text",
-      "default": "2500"
+      "default": "2500",
+      "formula": "(dim5 + dim4_c1).toFixed(0)"
     },
     {
       "id": "dim5",
       "label": "Dimension 5",
       "type": "text",
-      "default": "1000"
+      "default": "1000",
+      "formula": "(dim4 - dim5_c1).toFixed(0)"
     },
     {
       "id": "dim6",
       "label": "Dimension 6",
       "type": "text",
-      "default": "305"
+      "default": "305",
+      "formula": "(dim7 * 2.96).toFixed(0)"
     },
     {
       "id": "dim7",
       "label": "Dimension 7",
       "type": "text",
-      "default": "103"
+      "default": "103",
+      "formula": "(dim6 * 0.337).toFixed(0)"
+    },
+    {
+      "id": "dim4_c1",
+      "label": "Constant (dim4_c1)",
+      "type": "text",
+      "default": "1500",
+      "const": true
+    },
+    {
+      "id": "dim5_c1",
+      "label": "Constant (dim5_c1)",
+      "type": "text",
+      "default": "1500",
+      "const": true
     }
   ],
   "bindings": [
