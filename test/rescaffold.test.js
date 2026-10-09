@@ -110,6 +110,110 @@ test('geometry bindings are re-proposed from the current art, not copied over', 
   );
 });
 
+test('hand-made part binding survives re-scaffold with fresh calibration when ids exist and value matches', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'ladder-re-'));
+  await scaffold(PDF, { llm: false, id: 're-part', templatesDir: tmp });
+
+  // hand-made part binding for a dim the fresh proposal skips (dim5 on 003),
+  // written with stale calibration — re-scaffold must keep it but re-derive
+  // anchor/pxPerUnit from the fresh art (ticket #12)
+  const tpl = readTpl(tmp, 're-part');
+  tpl.bindings.push({ ids: ['path2'], param: 'dim5', geom: { op: 'shiftY', anchor: 424242, pxPerUnit: 0.000001 } });
+  writeTpl(tmp, 're-part', tpl);
+
+  const r2 = await scaffold(PDF, { llm: false, id: 're-part', templatesDir: tmp });
+  assert.equal(r2.preservedParts, 1, 'exactly the hand-made part binding is carried over');
+  const tpl2 = readTpl(tmp, 're-part');
+  const kept = tpl2.bindings.find((b) => (b.ids || []).includes('path2'));
+  assert.ok(kept, 'hand-made part binding survives re-scaffold');
+  assert.equal(kept.param, 'dim5', 'membership: param kept');
+  assert.equal(kept.geom.op, 'shiftY', 'membership: op kept');
+  assert.equal(kept.geom.anchor, 1000, 'stale anchor recomputed from the fresh dim value');
+  const arrow = tpl2.bindings.find((b) => b.param === 'dim5' && b.geom?.op === 'shiftY' && b.ids?.length === 1);
+  assert.ok(Math.abs(kept.geom.pxPerUnit - arrow.geom.pxPerUnit) < 1e-9, 'stale pxPerUnit recomputed from the fresh art');
+
+  // the carried binding still drives the render
+  const out = renderById(tmp, 're-part', tpl2.sample);
+  assert.ifError(out.error);
+  assert.ok(out.report.find((b) => (b.ids || []).includes('path2'))?.ok, 'carried part binding applies at render');
+});
+
+test('hand-made part binding drops when the value changed or an id is gone', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'ladder-re-'));
+  await scaffold(PDF, { llm: false, id: 're-partdrop', templatesDir: tmp });
+
+  const tpl = readTpl(tmp, 're-partdrop');
+  // dim ids are positional: a changed value means the fresh art moved, so the
+  // binding must not follow the id onto a different dimension
+  tpl.params.find((p) => p.id === 'dim6').default = '999';
+  tpl.bindings.push({ ids: ['path3'], param: 'dim6', geom: { op: 'stretchY', about: 'max', anchor: 305 } });
+  tpl.bindings.push({ ids: ['ghost-part'], param: 'dim5', geom: { op: 'shiftY', anchor: 1000, pxPerUnit: 0.1 } });
+  writeTpl(tmp, 're-partdrop', tpl);
+
+  const r2 = await scaffold(PDF, { llm: false, id: 're-partdrop', templatesDir: tmp });
+  assert.equal(r2.preservedParts, 0, 'nothing carried over');
+  const tpl2 = readTpl(tmp, 're-partdrop');
+  assert.ok(!tpl2.bindings.some((b) => (b.ids || []).includes('path3')), 'binding whose value changed is dropped');
+  assert.ok(!tpl2.bindings.some((b) => (b.ids || []).includes('ghost-part')), 'binding whose ids are gone is dropped');
+});
+
+test('stale auto-proposed annotation binding is never carried when its dim is re-recognised', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'ladder-re-'));
+  await scaffold(PDF, { llm: false, id: 're-stale', templatesDir: tmp });
+
+  // A previous run's auto-proposed text binding (half rate) after a re-export
+  // changed the glyph ids (old ids still exist as unrelated elements): dim6
+  // is re-recognised fresh (annotated, no part proposals, NOT ambiguous), so
+  // auto-reposed bindings are recomputed, never carried — the stale binding
+  // must not survive rebuilt at the full rate (#12/spec #8).
+  const tpl = readTpl(tmp, 're-stale');
+  tpl.bindings.push({ ids: ['path2'], param: 'dim6', geom: { op: 'shiftY', anchor: 305, pxPerUnit: 0.000001 } });
+  writeTpl(tmp, 're-stale', tpl);
+
+  const r2 = await scaffold(PDF, { llm: false, id: 're-stale', templatesDir: tmp });
+  assert.equal(r2.preservedParts, 0, 'a stale auto-proposed binding is never carried');
+  const tpl2 = readTpl(tmp, 're-stale');
+  assert.ok(!tpl2.bindings.some((b) => (b.ids || []).includes('path2') && b.param === 'dim6'), 'stale text binding dropped, not rebuilt at the full rate');
+});
+
+test('hand-made part binding on an ambiguous dim still survives re-scaffold', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'ladder-re-'));
+  await scaffold(PDF, { llm: false, id: 're-ambig', templatesDir: tmp });
+
+  // dim5's fresh part proposal is ambiguous (0 bound) — the scaffold proposed
+  // nothing for it, so a hand-made part binding for it still carries (spec
+  // story 18: hand-add part bindings for the dims the scaffold skipped).
+  const tpl = readTpl(tmp, 're-ambig');
+  tpl.bindings.push({ ids: ['path2'], param: 'dim5', geom: { op: 'shiftY', anchor: 1000, pxPerUnit: 0.000001 } });
+  writeTpl(tmp, 're-ambig', tpl);
+
+  const r2 = await scaffold(PDF, { llm: false, id: 're-ambig', templatesDir: tmp });
+  assert.equal(r2.preservedParts, 1, 'hand-made part binding on an ambiguous dim is carried');
+  const tpl2 = readTpl(tmp, 're-ambig');
+  const kept = tpl2.bindings.find((b) => (b.ids || []).includes('path2'));
+  assert.equal(kept.param, 'dim5', 'membership kept');
+  assert.equal(kept.geom.anchor, 1000, 'calibration re-derived from the fresh dim value');
+});
+
+test('auto-proposed part bindings are always recomputed, never carried', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'ladder-re-'));
+  await scaffold(PDF, { llm: false, id: 're-partauto', templatesDir: tmp });
+
+  // tamper with an auto-proposed part binding's calibration — the fresh
+  // proposal must win, so stale calibration can never survive
+  const tpl = readTpl(tmp, 're-partauto');
+  const auto = tpl.bindings.find((b) => b.geom?.about);
+  auto.geom.anchor = 424242;
+  writeTpl(tmp, 're-partauto', tpl);
+
+  const r2 = await scaffold(PDF, { llm: false, id: 're-partauto', templatesDir: tmp });
+  assert.equal(r2.preservedParts, 0, 'auto-proposed part bindings are never carried');
+  const tpl2 = readTpl(tmp, 're-partauto');
+  assert.ok(!tpl2.bindings.some((b) => b.geom?.anchor === 424242), 'tampered calibration is not carried over');
+  const fresh = tpl2.bindings.find((b) => (b.ids || []).includes(auto.ids[0]));
+  assert.equal(fresh.geom.anchor, 980, 'fresh proposal recomputes the calibration');
+});
+
 test('scaffold with force: true wipes the prior template (from-scratch behavior)', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
   const tmp = mkdtempSync(join(tmpdir(), 'ladder-re-'));
   await scaffold(PDF, { llm: fakeLLM, id: 're-force', templatesDir: tmp });
@@ -119,10 +223,12 @@ test('scaffold with force: true wipes the prior template (from-scratch behavior)
   const tpl = readTpl(tmp, 're-force');
   tpl.params.find((p) => p.id === 'dim1').label = 'Platform length';
   tpl.bindings.push({ ids: ['path1445'], param: 'dim1', mode: 'id' });
+  tpl.bindings.push({ ids: ['path1446'], param: 'dim5', geom: { op: 'shiftY', anchor: 1000, pxPerUnit: 0.1 } });
   writeTpl(tmp, 're-force', tpl);
 
   const r2 = await scaffold(PDF, { llm: false, force: true, id: 're-force', templatesDir: tmp });
   assert.equal(r2.preserved, 0, 'nothing carried over under --force');
+  assert.equal(r2.preservedParts, 0, 'hand-made part bindings wiped under --force too');
   const forced = readTpl(tmp, 're-force');
   const fresh = readTpl(tmp, 'fresh-cmp');
   assert.deepEqual(forced.params, fresh.params, 'params identical to a from-scratch scaffold');

@@ -13,7 +13,7 @@ const usage = () => {
   node bin/ladder.mjs serve [port]
   node bin/ladder.mjs scaffold <file.pdf> [--force]
   node bin/ladder.mjs editor   <templateDir>
-  node bin/ladder.mjs proof    <templateDir>
+  node bin/ladder.mjs proof    <templateDir> [--set param=value ...]
   node bin/ladder.mjs render   <templateId> [params.json] [-o out.svg]
   node bin/ladder.mjs convert  <file.pdf> -o out.svg [--converter auto|inkscape|pdftocairo]
   node bin/ladder.mjs extract  <file.pdf> [-o params.json] [--llm-whole|--no-llm]

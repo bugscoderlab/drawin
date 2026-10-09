@@ -31,12 +31,14 @@ node bin/ladder.mjs render trolley-slt p.json -o out.svg
 node bin/ladder.mjs scaffold "file.pdf" [--force]
 ```
 
-Convert → hide outline duplicates → auto-propose bindings (title block + dimensions) → write `templates/<id>/` → build the editor HTML in `preview/`.
+Convert → hide outline duplicates → auto-propose bindings (title block + dimensions, geometry annotations, and part bindings for the geometry each dimension measures) → write `templates/<id>/` → build the editor HTML in `preview/`.
 
 Re-scaffold is **preserve-by-default**: an existing `templates/<id>/` is merged —
 per-param formulas, labels, named constant params, and hand-made id-bindings
-(`POST /bind`) whose ids still exist in the base art are kept; outline hiding,
-value bindings, and geometry bindings are recomputed from the current art.
+(`POST /bind`) whose ids still exist in the base art are kept; hand-made part
+bindings survive when their ids still exist and the param's value is unchanged
+(their calibration is re-derived from the fresh art); outline hiding,
+value bindings, and geometry proposals are recomputed from the current art.
 `--force` restores the from-scratch wipe.
 
 ## ladder serve
@@ -51,9 +53,16 @@ Set `DRAWIN_ROOT=/path/to/root` to pin the server's templates/preview dirs somew
 ## ladder proof / ladder editor
 
 ```bash
-node bin/ladder.mjs proof templates/<id>     # before/after render check
+node bin/ladder.mjs proof templates/<id> [--set param=value ...]   # before/after render check
 node bin/ladder.mjs editor templates/<id>    # (re)build preview/<id>-editor.html
 ```
+
+`proof` renders the template's original values beside its `sample` values (the
+binding report goes to stdout, images to `preview/<id>/`); repeatable
+`--set param=value` overrides sample params for the AFTER image — e.g. the 004
+part-binding proof (fresh scaffold of `LSB-2607-004-FHL-R00.pdf`, artifacts in
+`preview/lsb-2607-004-fhl-r00/`) uses `--set dim1=1000` so the comparison shows
+the widened cap with the bars meeting the moved rail.
 
 ## Download params (HTML bridge)
 
@@ -76,4 +85,4 @@ npm test                    # build (bundle+manifest) then node --test
 UPDATE_SNAPSHOTS=1 npm test # regenerate render fixtures after an intentional change
 ```
 
-23 tests across snapshots (per-module fixtures + bundle↔ESM parity), registry matching, `ladder render`, and conversion (the real-conversion cases skip when Inkscape/poppler are absent).
+127 tests across snapshots (per-module fixtures + bundle↔ESM parity), registry matching, `ladder render`, geometry/part bindings, re-scaffold preservation, and conversion (the real-conversion cases skip when Inkscape/poppler are absent).
