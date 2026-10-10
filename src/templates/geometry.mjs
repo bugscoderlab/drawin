@@ -69,8 +69,10 @@ function elementById(svg, id) {
 /** Local extent of an element along one axis ('x' | 'y'), parsed from its
  *  d attribute and tracked over path endpoints (curve control points do not
  *  count — exact for the line-based art this engine binds). Returns
- *  { lo, hi } or null when the element has no d / an unsupported command. */
-function localExtent(tag, axis) {
+ *  { lo, hi } or null when the element has no d / an unsupported command.
+ *  Exported for the proposal stage (spec #20): an axial part binding needs a
+ *  usable local x extent for its pinned about end. */
+export function localExtent(tag, axis) {
   const dm = tag.match(/\bd="([^"]*)"/);
   if (!dm) return null;
   const t = dm[1].match(/[a-zA-Z]|-?(?:\d*\.)?\d+(?:[eE][-+]?\d+)?/g) || [];

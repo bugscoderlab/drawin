@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, join, basename } from 'node:path';
 import { textRuns, findRun, orderedLists } from '../templates/render.mjs';
+import { localExtent } from '../templates/geometry.mjs';
 import { parseQueryAll, coincidentOutlineIds, hideIds, svgIds, mergeGlyphTexts } from '../templates/authoring.mjs';
 import { buildEditor } from './makeEditor.mjs';
 import { convertPdf } from '../convert/convert.mjs';
@@ -165,6 +166,10 @@ export function proposeGeometry(rows, props, svg = '') {
     return m ? m[1] : null;
   };
   const matrixOf = (id) => transformOf(id)?.match(/matrix\(([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+)\)/);
+  const tagOf = (id) => {
+    const m = svg.match(new RegExp(`<[a-zA-Z][^>]*?\\bid="${id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"[^>]*>`));
+    return m ? m[0] : null;
+  };
 
   // Stage 1: recognise each dim's dimension line (claimed keeps lines unique).
   const claimed = new Set();
@@ -230,7 +235,7 @@ export function proposeGeometry(rows, props, svg = '') {
   // Stage 3: part bindings — the geometry the dimension measures (spec #8).
   const parts = [];
   for (const r of recs) {
-    const pr = proposeParts(usable, claimed, r, matrixOf);
+    const pr = proposeParts(usable, claimed, r, matrixOf, tagOf);
     bindings.push(...pr.bindings);
     parts.push({ param: r.p.id, bound: pr.bound, skipped: pr.skipped, ...(pr.ambiguous ? { ambiguous: true } : {}) });
   }
@@ -288,9 +293,24 @@ export function deriveAbout(matrixOf, r, { vertical, datumC }) {
 // which derives its bound from this admitted tolerance (locked constant).
 export const SPAN_TOL = 0.10;
 
-/** Part-proposal stage (spec #8, tickets #10/#11): for a dimension whose
- *  annotation bound, classify the axis-aligned elements inside the locality
- *  box. Span rule (#10): an element whose measured-axis extent matches the
+// Orientation bands (spec #20, ticket #22): a candidate's angle θ = atan2(b,
+// a) mod π from its matrix decides which rule family applies. Within ±12.5°
+// of horizontal/vertical the element keeps the axis-aligned rules (for an
+// axis-aligned element the bbox side along the measured axis IS its
+// projection — today's behaviour unchanged); anything steeper classifies
+// AXIAL and is measured by its bbox projection onto the measured axis.
+const AXIS_BAND = (12.5 * Math.PI) / 180;
+const orientOf = (m) => {
+  if (!m) return 'X';                    // no transform: identity, the axis-aligned default
+  const th = ((Math.atan2(+m[2], +m[1]) % Math.PI) + Math.PI) % Math.PI;
+  if (th <= AXIS_BAND || th >= Math.PI - AXIS_BAND) return 'X';
+  if (Math.abs(th - Math.PI / 2) <= AXIS_BAND) return 'Y';
+  return 'AXIAL';
+};
+
+/** Part-proposal stage (spec #8, tickets #10/#11/#22): for a dimension whose
+ *  annotation bound, classify the elements inside the locality box.
+ *  Span rule (#10): an element whose measured-axis extent matches the
  *  dim extent (±SPAN_TOL) with both ends on the dim's end planes becomes a
  *  stretch part binding; the `about` end is the datum side of the element's
  *  local extent. Attach rule (#11): an element wholly on the moving side of
@@ -299,16 +319,25 @@ export const SPAN_TOL = 0.10;
  *  full rate (the dim's own extent/value). Elements attached to the datum
  *  end stay unbound, as do candidates matching no rule (counted skipped).
  *
+ *  Rotated candidates (#22): the old "non-axis-aligned -> ambiguous" rule is
+ *  replaced by orientation classification. X/Y-family candidates (within
+ *  ±12.5° of horizontal/vertical) run the same axis-aligned rules as before.
+ *  AXIAL candidates run the projected rules: span -> stretchAxial about the
+ *  datum-side local end; attach -> shiftAxial riding the element's own axis
+ *  at s_along = s / sin(α). Rotated annotation TEXT is never a part
+ *  candidate, and an AXIAL candidate without a usable path extent (the
+ *  engine's pinned end needs the local x extent) counts as skipped,
+ *  reported — neither makes the dim ambiguous.
+ *
  *  All-or-nothing (#11): an element that overlaps BOTH end planes without
- *  matching the span rule, or whose transform is not axis-aligned, makes the
- *  WHOLE dimension's part proposal ambiguous — every binding proposed for it
- *  is dropped, its claims released, and the dim reports `ambiguous: true`
- *  ("skipped: ambiguous" in the report). A half-moved assembly is worse than
- *  an honestly unedited one.
+ *  matching a rule makes the WHOLE dimension's part proposal ambiguous —
+ *  every binding proposed for it is dropped, its claims released, and the
+ *  dim reports `ambiguous: true` ("skipped: ambiguous" in the report). A
+ *  half-moved assembly is worse than an honestly unedited one.
  *
  *  One element binds to at most one dimension: candidates come from the
  *  shared `claimed` set and every bound id joins it. */
-function proposeParts(usable, claimed, { p, line, extent, vertical, datum, moving }, matrixOf) {
+function proposeParts(usable, claimed, { p, line, extent, vertical, datum, moving }, matrixOf, tagOf) {
   const v = parseFloat(String(p.value).replace(/,/g, ''));
   const axis = vertical ? 'y' : 'x';
   const lineLen = { x: line.w, y: line.h };
@@ -327,8 +356,52 @@ function proposeParts(usable, claimed, { p, line, extent, vertical, datum, movin
     if (claimed.has(r.id)) continue;
     if (!inLocality(r, line, extent, vertical)) continue;  // locality guard
     const m = matrixOf(r.id);
-    if (m && (Math.abs(+m[2]) > 1e-6 || Math.abs(+m[3]) > 1e-6)) { ambiguous = true; skipped++; continue; }  // non-axis-aligned
+    // r0/r1 are the element's bbox ends on the measured axis — for an AXIAL
+    // candidate this is exactly its bbox projected onto the measured axis.
     const r0 = r[axis], r1 = r0 + len(r, axis);
+    if (orientOf(m) === 'AXIAL') {
+      const tag = tagOf(r.id);
+      // Rotated annotation text is never a part candidate (spec #20), and an
+      // axial op needs a path-like local x extent (the engine's pinned end
+      // for about "max"; the about derivation below). Either way: skipped
+      // and reported — never a part, never ambiguous.
+      const ext = tag && !/^<(?:text|tspan)\b/i.test(tag) ? localExtent(tag, 'x') : null;
+      if (!ext) { skipped++; continue; }
+      if (Math.abs(r1 - r0 - extent) <= tol && Math.abs(r0 - d0) <= tol && Math.abs(r1 - d1) <= tol) {
+        // Axial span rule: the projected bbox spans the dim extent with both
+        // ends on the end planes -> stretch along the element's own axis
+        // (angle preserved); the pinned end is the datum side of the local
+        // extent (deriveAbout; the engine's "min" pins the local-origin end).
+        const about = deriveAbout(matrixOf, r, { vertical, datumC });
+        bindings.push({ ids: [r.id], param: p.id, geom: { op: 'stretchAxial', about, anchor: v } });
+        claimed.add(r.id);
+        bound++;
+        continue;
+      }
+      if (moving && Math.abs((dir > 0 ? r0 : r1) - movingC) <= tol && (dir > 0 ? r1 : r0) * dir >= datumC * dir) {
+        // Axial attach rule: the whole projected bbox lies on the moving side
+        // with its near point on the moving-end plane -> the element rides
+        // the plane rigidly along its own axis. Rate derivation: the plane
+        // travels s px per mm along the measured axis; translating the
+        // element d user units along its own axis (length |(a,b)|) shifts
+        // its measured-axis projection by d·sin(α), where α is the axis
+        // elevation from the measured plane and sin(α) = the axis's
+        // component along the measured axis over its length — |a|/|(a,b)|
+        // for a horizontal dim, |b|/|(a,b)| for a vertical one (the fraction
+        // of axial travel that lands on the measured axis). Keeping the near
+        // projected point on the plane needs d·sin(α) = s·Δv per Δv mm, so
+        // pxPerUnit = s / sin(α). The AXIAL band guarantees
+        // sin(α) ≥ sin(12.5°) ≈ 0.216, so the rate is always finite.
+        const sinA = Math.abs(vertical ? +m[2] : +m[1]) / Math.hypot(+m[1], +m[2]);
+        bindings.push({ ids: [r.id], param: p.id, geom: { op: 'shiftAxial', anchor: v, pxPerUnit: s / sinA } });
+        claimed.add(r.id);
+        bound++;
+        continue;
+      }
+      skipped++;
+      if (r0 <= d0 + tol && r1 >= d1 - tol) ambiguous = true;   // overlaps both end planes
+      continue;
+    }
     if (Math.abs(r1 - r0 - extent) <= tol && Math.abs(r0 - d0) <= tol && Math.abs(r1 - d1) <= tol) {
       // Span rule: the pinned end is the datum side of the element's local
       // extent (deriveAbout; the engine's "min" pins the local-origin end).
