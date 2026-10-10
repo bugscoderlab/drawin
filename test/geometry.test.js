@@ -116,6 +116,113 @@ test('comma values parse; bad input reports instead of throwing', () => {
   assert.match(report[2].reason, /id not found/);
 });
 
+// ---------- axial ops (#21): rotated elements stretch/shift along their own axis ----------
+
+// Hand-computed fixture: a=6,b=8 (|axis|=10, unit (0.6,0.8)), c=0,d=5,e=10,f=20.
+const ROT = '<path id="s" transform="matrix(6,8,0,5,10,20)" d="M 0,0 H 40"/>';
+const ROT_NEG = '<path id="s" transform="matrix(6,8,0,5,10,20)" d="M 0,0 H -40"/>';
+const axialSvg = (path) => `<svg xmlns="http://www.w3.org/2000/svg">${path}</svg>`;
+
+test('stretchAxial about:"max" pins the far end of a rotated element', () => {
+  const { svg: out, report } = applyGeometry(axialSvg(ROT), [
+    { ids: ['s'], param: 'dim', geom: { op: 'stretchAxial', about: 'max', anchor: 200 } },
+  ], { dim: '300' });
+  assert.equal(report[0].ok, true, JSON.stringify(report[0]));
+  // ratio 1.5: the whole (a,b) column scales (angle preserved). Far end is
+  // local x=40, |hi|=40 > |lo|=0. Its user position before: (6*40+10, 8*40+20)
+  // = (250, 340) and must stay there:
+  //   e' = 10 + 6*40*(1-1.5) = -110,  f' = 20 + 8*40*(1-1.5) = -140
+  // check: (9*40-110, 12*40-140) = (250, 340) — pinned.
+  assert.deepEqual(parseMatrix(out.match(/transform="([^"]*)"/)[1]), { a: 9, b: 12, c: 0, d: 5, e: -110, f: -140 });
+});
+
+test('stretchAxial about:"max" on a rotated negative-extent path pins the far end', () => {
+  const { svg: out, report } = applyGeometry(axialSvg(ROT_NEG), [
+    { ids: ['s'], param: 'dim', geom: { op: 'stretchAxial', about: 'max', anchor: 200 } },
+  ], { dim: '300' });
+  assert.equal(report[0].ok, true, JSON.stringify(report[0]));
+  // ratio 1.5: far end is local x=-40 (|lo|=40 > |hi|=0), user position
+  // (6*-40+10, 8*-40+20) = (-230, -300) and must stay there:
+  //   e' = 10 + 6*-40*(1-1.5) = 130,  f' = 20 + 8*-40*(1-1.5) = 180
+  // check: (9*-40+130, 12*-40+180) = (-230, -300) — pinned.
+  assert.deepEqual(parseMatrix(out.match(/transform="([^"]*)"/)[1]), { a: 9, b: 12, c: 0, d: 5, e: 130, f: 180 });
+});
+
+test('stretchAxial about:"min" keeps the local origin fixed and preserves the angle', () => {
+  const { svg: out, report } = applyGeometry(axialSvg(ROT), [
+    { ids: ['s'], param: 'dim', geom: { op: 'stretchAxial', about: 'min', anchor: 200 } },
+  ], { dim: '300' });
+  assert.equal(report[0].ok, true, JSON.stringify(report[0]));
+  // about "min" pins the local-origin end (p0=0): translation untouched, the
+  // (a,b) column scales by the ratio. Local end x=40 rides the axis:
+  // before (250,340) -> after (9*40+10, 12*40+20) = (370,500), i.e. 1.5x
+  // further along the SAME unit direction (0.6,0.8): (250-10,340-20)*0.5 = (120,160).
+  assert.deepEqual(parseMatrix(out.match(/transform="([^"]*)"/)[1]), { a: 9, b: 12, c: 0, d: 5, e: 10, f: 20 });
+  // omitted about is exactly explicit "min"
+  const { svg: dflt } = applyGeometry(axialSvg(ROT), [
+    { ids: ['s'], param: 'dim', geom: { op: 'stretchAxial', anchor: 200 } },
+  ], { dim: '300' });
+  assert.equal(dflt, out);
+});
+
+test('stretchAxial with b=0 renders byte-identical to stretchX (both about values, both extent signs)', () => {
+  for (const d of ['M 0,0 H 5', 'M 0,0 H -5']) {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg"><path id="x" transform="matrix(2,0,0,3,10,20)" d="${d}"/></svg>`;
+    for (const about of [undefined, 'min', 'max']) {
+      const geom = { op: 'stretchX', about, anchor: 100 };
+      const geomAxial = { op: 'stretchAxial', about, anchor: 100 };
+      const cli = applyGeometry(svg, [{ ids: ['x'], param: 'dim', geom }], { dim: '150' });
+      const ax = applyGeometry(svg, [{ ids: ['x'], param: 'dim', geom: geomAxial }], { dim: '150' });
+      assert.equal(ax.svg, cli.svg, `d="${d}" about=${about}`);
+      assert.deepEqual(ax.report.map((r) => r.ok), cli.report.map((r) => r.ok));
+    }
+  }
+});
+
+test('shiftAxial translates along the local x-axis unit direction at the exact rate', () => {
+  const { svg: out, report } = applyGeometry(axialSvg(ROT), [
+    { ids: ['s'], param: 'dim', geom: { op: 'shiftAxial', anchor: 100, pxPerUnit: 0.4 } },
+  ], { dim: '350' });
+  assert.equal(report[0].ok, true, JSON.stringify(report[0]));
+  // d = (350-100)*0.4 = 100 user units along (a,b)/|(a,b)| = (0.6,0.8):
+  //   e' = 10 + 0.6*100 = 70,  f' = 20 + 0.8*100 = 100. Scale column untouched.
+  assert.deepEqual(parseMatrix(out.match(/transform="([^"]*)"/)[1]), { a: 6, b: 8, c: 0, d: 5, e: 70, f: 100 });
+});
+
+test('shiftAxial with b=0 is byte-identical to shiftX', () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg"><path id="x" transform="matrix(2,0,0,3,10,20)" d="M 0,0 H 5"/></svg>';
+  const run = (op) => applyGeometry(svg, [{ ids: ['x'], param: 'dim', geom: { op, anchor: 100, pxPerUnit: 0.5 } }], { dim: '350' });
+  const cli = run('shiftX');
+  const ax = run('shiftAxial');
+  assert.equal(ax.svg, cli.svg);
+  assert.deepEqual(ax.report.map((r) => r.ok), cli.report.map((r) => r.ok));
+});
+
+test('axial ops report unusable extents and degenerate axes, never thrown', () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg">'
+    + '<path id="nod"/>'
+    + '<path id="zero" transform="matrix(0,0,0,1,5,6)" d="M 0,0 H 5"/>'
+    + '<path id="ok" transform="matrix(1,0,0,1,0,0)" d="M 0,0 H 5"/></svg>';
+  const { svg: out, report } = applyGeometry(svg, [
+    { ids: ['nod'], param: 'd', geom: { op: 'stretchAxial', about: 'max', anchor: 100 } },
+    { ids: ['zero'], param: 'd', geom: { op: 'shiftAxial', anchor: 100, pxPerUnit: 0.5 } },
+    { ids: ['ok'], param: 'd', geom: { op: 'stretchAxial', about: 'min', anchor: 100 } },
+    { ids: ['ok'], param: 'd', geom: { op: 'shiftAxial', anchor: 100, pxPerUnit: 0.5 } },
+    { ids: ['ok'], param: 'd', geom: { op: 'shear', anchor: 100 } },
+  ], { d: '150' });
+  assert.equal(report[0].ok, false);
+  assert.match(report[0].reason, /no local extent/, 'stretchAxial about "max" needs a d extent');
+  assert.equal(report[1].ok, false);
+  assert.match(report[1].reason, /degenerate/, 'shiftAxial refuses a zero-length axis');
+  assert.equal(report[2].ok, true, 'stretchAxial about "min" needs no extent (p0=0)');
+  assert.equal(report[3].ok, true, 'identity axis (1,0) is a valid direction');
+  assert.equal(report[4].ok, false);
+  assert.match(report[4].reason, /unknown op/);
+  // failed rows leave their elements untouched
+  assert.match(out, /<path id="nod"\/>/);
+  assert.match(out, /matrix\(0,0,0,1,5,6\)/);
+});
+
 // ---------- proposeGeometry units ----------
 
 const syntheticSvg = '<svg xmlns="http://www.w3.org/2000/svg">'
@@ -421,6 +528,9 @@ test('editor inline engine applies identical geometry ops (port parity)', () => 
     + '<path id="p1" transform="matrix(2,0,0,3,10,20)" d="M 0,0 H 5"/>'
     + '<path id="p2" transform="matrix(1.3333333,0,0,-1.3333333,163.09173,95.326267)" d="M 0,0 H -27.865"/>'
     + '<path id="p3" transform="matrix(1,0,0,2,5,6)" d="M 0,0 V 4"/>'
+    + '<path id="p4" transform="matrix(6,8,0,5,10,20)" d="M 0,0 H 40"/>'
+    + '<path id="p5" transform="matrix(6,8,0,5,10,20)" d="M 0,0 H -40"/>'
+    + '<path id="zero" transform="matrix(0,0,0,1,5,6)" d="M 0,0 H 5"/>'
     + '<path id="t"/></svg>';
   const bindings = [
     { ids: ['p1'], param: 'd', geom: { op: 'stretchX', about: 'max', anchor: 100 } },
@@ -430,6 +540,16 @@ test('editor inline engine applies identical geometry ops (port parity)', () => 
     { ids: ['t'], param: 'd', geom: { op: 'stretchX', anchor: 100 } },
     { ids: ['missing'], param: 'd', geom: { op: 'stretchX', about: 'max', anchor: 100 } },
     { ids: ['p2'], param: 'd', geom: { op: 'stretchX', about: 'middle', anchor: 500 } },
+    // #21 axial ops: rotated stretches (both about values, both extent signs),
+    // axial shift, and the resilience rows (no extent for about:max, zero axis)
+    { ids: ['p4'], param: 'd', geom: { op: 'stretchAxial', about: 'max', anchor: 200 } },
+    { ids: ['p5'], param: 'd', geom: { op: 'stretchAxial', about: 'min', anchor: 200 } },
+    { ids: ['p4'], param: 'd', geom: { op: 'stretchAxial', anchor: 200 } },
+    { ids: ['p4'], param: 'd', geom: { op: 'shiftAxial', anchor: 100, pxPerUnit: 0.4 } },
+    { ids: ['p5'], param: 'd', geom: { op: 'shiftAxial', anchor: 100, pxPerUnit: 0.4 } },
+    { ids: ['t'], param: 'd', geom: { op: 'stretchAxial', about: 'max', anchor: 100 } },
+    { ids: ['zero'], param: 'd', geom: { op: 'shiftAxial', anchor: 100, pxPerUnit: 0.5 } },
+    { ids: ['p4'], param: 'd', geom: { op: 'stretchAxial', about: 'middle', anchor: 200 } },
   ];
   for (const params of [{ d: '150' }, { d: '3,500' }, { d: 'abc' }]) {
     const cli = applyGeometry(svg, bindings, params);

@@ -21,6 +21,22 @@
 //       pxPerUnit user units. pxPerUnit is the drawing's own px-per-mm for
 //       this measure (line extent / anchor): full amount moves a far-end
 //       arrowhead with the line; half re-centres the dimension text group.
+//   'stretchAxial'          : like stretchX but for a ROTATED element: scales
+//       the whole local x-axis column (a,b) by (value / anchor) — the length
+//       along the element's own axis changes, the angle is preserved (c,d
+//       untouched) — and translates e,f so the pinned LOCAL end stays fixed
+//       in user space: e' = e + a·p₀·(1−ratio), f' = f + b·p₀·(1−ratio),
+//       where p₀ is the pinned end of the path's local x-extent (the
+//       localExtent()/about machinery: "min" pins the local-origin end, p₀=0;
+//       "max" pins the far end). For b=0 this reduces exactly to stretchX
+//       with the same about (byte-identical) — the axis-aligned case is the
+//       special case. about:"max" needs a usable d extent; without one the
+//       row is reported, never thrown.
+//   'shiftAxial'            : like shiftX but translates along the element's
+//       own local x-axis unit direction (a,b)/|(a,b)| by (value − anchor) *
+//       pxPerUnit: e' = e + ux·d, f' = f + uy·d. For axis-aligned elements
+//       (b=0) this equals shiftX/shiftY (byte-identical). A degenerate
+//       zero-length axis (a=b=0) is reported, never thrown.
 //
 // Self-calibrating: all numbers come from the drawing itself, so it works on
 // art drawn at any scale (shop drawings are frequently not uniformly scaled).
@@ -118,7 +134,7 @@ export function applyGeometry(svg, bindings, params) {
       report.push({ ...b, ok: false, reason: 'not numeric' });
       continue;
     }
-    if (!['stretchX', 'stretchY', 'shiftX', 'shiftY'].includes(op)) {
+    if (!['stretchX', 'stretchY', 'shiftX', 'shiftY', 'stretchAxial', 'shiftAxial'].includes(op)) {
       report.push({ ...b, ok: false, reason: `unknown op "${op}"` });
       continue;
     }
@@ -142,6 +158,32 @@ export function applyGeometry(svg, bindings, params) {
         const p0 = Math.abs(ext.lo) > Math.abs(ext.hi) ? ext.lo : ext.hi;
         if (op === 'stretchX') r = patchTransform(out, id, (m) => ({ ...m, a: m.a * ratio, e: m.e + m.a * p0 * (1 - ratio) }));
         else r = patchTransform(out, id, (m) => ({ ...m, d: m.d * ratio, f: m.f + m.d * p0 * (1 - ratio) }));
+      }
+      else if (op === 'stretchAxial') {
+        // Scale the whole local x-axis column; the pinned end's user position
+        // (a*p0 + e, b*p0 + f) must stay fixed. about "min" pins the local
+        // origin (p0 = 0, translation untouched — today's axis-aligned case);
+        // about "max" pins the far end of the local x-extent.
+        let p0 = 0;
+        if (about === 'max') {
+          const el = elementById(out, id);
+          const ext = el && localExtent(el.tag, 'x');
+          if (!el || !ext) { ok = false; reasons.push(`${id}: ${el ? 'no local extent' : 'id not found'}`); continue; }
+          p0 = Math.abs(ext.lo) > Math.abs(ext.hi) ? ext.lo : ext.hi;
+        }
+        r = patchTransform(out, id, (m) => ({ ...m, a: m.a * ratio, b: m.b * ratio, e: m.e + m.a * p0 * (1 - ratio), f: m.f + m.b * p0 * (1 - ratio) }));
+      }
+      else if (op === 'shiftAxial') {
+        // Translate along the element's own local x-axis unit direction.
+        const el = elementById(out, id);
+        const cur = el && /\btransform="[^"]*"/.test(el.tag) ? el.tag.match(/\btransform="([^"]*)"/)[1] : null;
+        const mm = cur ? parseMatrix(cur) : null;
+        if (cur && !mm) { ok = false; reasons.push(`${id}: unsupported transform`); continue; }
+        const { a, b } = mm || { a: 1, b: 0 };
+        const len = Math.hypot(a, b);
+        if (len === 0) { ok = false; reasons.push(`${id}: degenerate axis`); continue; }
+        const d = (value - anchor) * pxPerUnit;
+        r = patchTransform(out, id, (m) => ({ ...m, e: m.e + a / len * d, f: m.f + b / len * d }));
       }
       else if (op === 'stretchX') r = patchTransform(out, id, (m) => ({ ...m, a: m.a * ratio }));
       else if (op === 'stretchY') r = patchTransform(out, id, (m) => ({ ...m, d: m.d * ratio }));
