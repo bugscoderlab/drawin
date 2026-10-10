@@ -11,7 +11,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, join, basename } from 'node:path';
 import { textRuns, findRun, orderedLists } from '../templates/render.mjs';
-import { parseQueryAll, coincidentOutlineIds, hideIds, svgIds } from '../templates/authoring.mjs';
+import { parseQueryAll, coincidentOutlineIds, hideIds, svgIds, mergeGlyphTexts } from '../templates/authoring.mjs';
 import { buildEditor } from './makeEditor.mjs';
 import { convertPdf } from '../convert/convert.mjs';
 
@@ -110,7 +110,10 @@ function propose(runs, pageH) {
   add('drawingNo', 'Drawing No.', texts.find((t) => /^LSB[-/][0-9A-Za-z/-]{6,}$/.test(t)));
   add('customer', 'Customer', texts.find((t) => /SDN\.?\s*BHD$/i.test(t) && !/LADDERTECH|LADDER\s*TECH|NEW\s*AGE|NAR\b/i.test(t)));
   add('workingLoad', 'Working Load', texts.find((t) => /^\d{2,3}\s?KG$/i.test(t)));
-  add('productName', 'Title', texts.filter((t) => /^[A-Z][A-Z0-9 ,&()/.-]{15,}$/.test(t)).sort((a, b) => b.length - a.length)[0]);
+  // title rows are commonly labelled "Product Name : X" — the label is not
+  // part of the value (and ':' is outside the title charset)
+  const stripLabel = (t) => t.replace(/^(product\s*name|title|description)\s*:\s*/i, '');
+  add('productName', 'Title', texts.filter((t) => /^[A-Z][A-Z0-9 ,&()/.-]{15,}$/.test(stripLabel(t))).map(stripLabel).sort((a, b) => b.length - a.length)[0]);
   let i = 0;
   for (const d of dimensionTokens(runs, pageH)) {
     if (i >= 8) break;
@@ -442,7 +445,15 @@ export async function scaffold(pdf, opts = {}) {
   // 1. convert (fallback chain: Inkscape keeps text — needed for binding)
   const raw = join(dir, 'base.svg');
   const conv = convertPdf(file, raw, { converter: opts.converter || 'auto' });
-  const base = readFileSync(raw, 'utf8');
+  let base = readFileSync(raw, 'utf8');
+
+  // 1b. merge glyph-split texts (issue #19): Inkscape's PDF import can emit
+  // one <text> per character; run-based field patterns need whole strings.
+  // Rewrites base.svg BEFORE the query-all so rows match the merged art.
+  if (conv.converter === 'inkscape') {
+    const g = mergeGlyphTexts(base);
+    if (g.merged) { base = g.svg; writeFileSync(raw, base); }
+  }
 
   // 2. hide coincident outline duplicates (Inkscape backend only — it has the text
   //    layer that makes runs findable; pdftocairo output has no <text> to bind)
