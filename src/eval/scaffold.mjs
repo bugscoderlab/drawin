@@ -237,6 +237,13 @@ export function proposeGeometry(rows, props, svg = '') {
     parts,
     calib: Object.fromEntries(recs.map((r) => [r.p.id, { v: num(r.p.value), s: r.s }])),
     annotated: new Set(recs.map((r) => r.p.id)),
+    // internals for the LLM part-proposal pass (spec #15): the deterministic
+    // stage's per-dim geometry, candidate pool, and exclusion set, so the
+    // model can pick membership within exactly the same guard rails.
+    recs,
+    usable,
+    claimed,
+    matrixOf,
   };
 }
 
@@ -245,6 +252,34 @@ export function proposeGeometry(rows, props, svg = '') {
 // the measured axis and ±1× on the cross axis (constants locked in
 // test/geometry.test.js).
 const LOCALITY = { along: 2, cross: 1 };
+
+/** Is `r` inside the dim line's locality box? (Shared by the deterministic
+ *  span/attach rules and the LLM part pass — one definition of the guard.) */
+export function inLocality(r, line, extent, vertical) {
+  const axis = vertical ? 'y' : 'x';
+  const cross = vertical ? 'x' : 'y';
+  const len = (q, a) => (a === 'y' ? q.h : q.w);
+  const mid = (q, a) => q[a] + len(q, a) / 2;
+  const halfA = len(line, axis) / 2 + LOCALITY.along * extent;
+  const halfC = len(line, cross) / 2 + LOCALITY.cross * extent;
+  return Math.abs(mid(r, axis) - mid(line, axis)) <= halfA
+    && Math.abs(mid(r, cross) - mid(line, cross)) <= halfC;
+}
+
+/** Which end of the element's LOCAL extent stays pinned for a span binding:
+ *  the end on the datum side. "min" pins the local-origin end (its user
+ *  position is the matrix translation); "max" pins the far end. Shared by the
+ *  deterministic span rule and the LLM part pass (spec #15). */
+export function deriveAbout(matrixOf, r, { vertical, datumC }) {
+  const axis = vertical ? 'y' : 'x';
+  const len = (q, a) => (a === 'y' ? q.h : q.w);
+  const r0 = r[axis], r1 = r0 + len(r, axis);
+  const m = matrixOf(r.id);
+  const o = m ? (axis === 'x' ? +m[5] : +m[6]) : r0;
+  const oEnd = Math.abs(o - r0) <= Math.abs(o - r1) ? 'min' : 'max';
+  const dEnd = Math.abs(datumC - r0) <= Math.abs(datumC - r1) ? 'min' : 'max';
+  return oEnd === dEnd ? 'min' : 'max';
+}
 // Span rule tolerance: measured-axis extent and end positions must match the
 // dim within ±10% of the dim extent. Exported for the e2e landing assertion,
 // which derives its bound from this admitted tolerance (locked constant).
@@ -273,40 +308,28 @@ export const SPAN_TOL = 0.10;
 function proposeParts(usable, claimed, { p, line, extent, vertical, datum, moving }, matrixOf) {
   const v = parseFloat(String(p.value).replace(/,/g, ''));
   const axis = vertical ? 'y' : 'x';
-  const cross = vertical ? 'x' : 'y';
   const lineLen = { x: line.w, y: line.h };
-  const lineMid = { x: line.x + line.w / 2, y: line.y + line.h / 2 };
   const d0 = line[axis];
   const d1 = d0 + lineLen[axis];
   const datumC = datum[axis];
   const movingC = moving && moving[axis];
   const dir = movingC === null || movingC === undefined ? 1 : Math.sign(movingC - datumC) || 1;
-  const halfA = lineLen[axis] / 2 + LOCALITY.along * extent;
-  const halfC = lineLen[cross] / 2 + LOCALITY.cross * extent;
   const tol = SPAN_TOL * extent;
   const s = extent / v;                    // full rate: the dim's own px/mm
 
   const len = (r, a) => (a === 'y' ? r.h : r.w);
-  const mid = (r, a) => r[a] + len(r, a) / 2;
   const bindings = [];
   let bound = 0, skipped = 0, ambiguous = false;
   for (const r of usable) {
     if (claimed.has(r.id)) continue;
-    if (Math.abs(mid(r, axis) - lineMid[axis]) > halfA || Math.abs(mid(r, cross) - lineMid[cross]) > halfC) continue;  // locality guard
+    if (!inLocality(r, line, extent, vertical)) continue;  // locality guard
     const m = matrixOf(r.id);
     if (m && (Math.abs(+m[2]) > 1e-6 || Math.abs(+m[3]) > 1e-6)) { ambiguous = true; skipped++; continue; }  // non-axis-aligned
     const r0 = r[axis], r1 = r0 + len(r, axis);
     if (Math.abs(r1 - r0 - extent) <= tol && Math.abs(r0 - d0) <= tol && Math.abs(r1 - d1) <= tol) {
-      // Span rule. The pinned end is the datum side of the element's local
-      // extent. The engine's "min" pins the local-origin end (its user
-      // position is the matrix translation); "max" pins the far end. So:
-      // origin end on the datum plane -> "min", otherwise "max" (the 004 cap
-      // bars: origin at the moving rail, path extending negative to the
-      // datum rail).
-      const o = m ? (axis === 'x' ? +m[5] : +m[6]) : r0;
-      const oEnd = Math.abs(o - r0) <= Math.abs(o - r1) ? 'min' : 'max';
-      const dEnd = Math.abs(datumC - r0) <= Math.abs(datumC - r1) ? 'min' : 'max';
-      const about = oEnd === dEnd ? 'min' : 'max';
+      // Span rule: the pinned end is the datum side of the element's local
+      // extent (deriveAbout; the engine's "min" pins the local-origin end).
+      const about = deriveAbout(matrixOf, r, { vertical, datumC });
       bindings.push({ ids: [r.id], param: p.id, geom: { op: `stretch${axis.toUpperCase()}`, about, anchor: v } });
       claimed.add(r.id);
       bound++;
@@ -558,6 +581,7 @@ export async function scaffold(pdf, opts = {}) {
   let calib = {};
   let annotated = new Set();
   let freshGeomIds = new Set();
+  let llmParts = { asked: 0, bound: 0, rejected: 0 };
   if (rows.length) {
     const g = proposeGeometry(rows, props, clean);
     tpl.bindings.push(...g.bindings);
@@ -566,6 +590,30 @@ export async function scaffold(pdf, opts = {}) {
     calib = g.calib;
     annotated = g.annotated;
     freshGeomIds = new Set(g.bindings.flatMap((b) => b.ids || []));
+
+    // LLM part proposals (spec #15): for dims whose deterministic proposal
+    // left skipped candidates, the model picks which elements the dim
+    // measures (spans vs attached) from the SAME candidate pool and guard
+    // rails; the engine derives ops and self-calibrates. Quiet no-op without
+    // a key or with opts.llm === false; opts.llm may inject a fake (tests).
+    if (opts.llm !== false) {
+      const eligible = g.recs.filter((r, i) => g.parts[i]?.skipped > 0);
+      if (eligible.length) {
+        const { proposeLlmParts, mergeLlmParts } = await import('./partsLlm.mjs');
+        const lp = await proposeLlmParts({
+          file,
+          recs: eligible,
+          usable: g.usable,
+          claimed: g.claimed,
+          matrixOf: g.matrixOf,
+          ...(typeof opts.llm === 'function' ? { call: opts.llm } : {}),
+        });
+        if (lp) {
+          ({ parts, freshGeomIds } = mergeLlmParts(parts, tpl.bindings, freshGeomIds, lp));
+          llmParts = lp.summary;
+        }
+      }
+    }
   }
   // hand-made id-bindings carried over from the prior template (issue #3)
   tpl.bindings.push(...prevIdBindings);
@@ -600,7 +648,7 @@ export async function scaffold(pdf, opts = {}) {
   // 4. editor
   const ed = buildEditor(dir, { previewDir: opts.previewDir || join(resolve(opts.templatesDir || 'templates'), '..', 'preview') });
 
-  return { id, dir, outlines, props, llmFormulas, geomLines, parts, preserved: prevIdBindings.length, preservedParts: carriedParts.length, vision, editor: ed.out, editorMB: (ed.bytes / 1e6).toFixed(1) };
+  return { id, dir, outlines, props, llmFormulas, geomLines, parts, preserved: prevIdBindings.length, preservedParts: carriedParts.length, vision, llmParts, editor: ed.out, editorMB: (ed.bytes / 1e6).toFixed(1) };
 }
 
 /** Human-readable scaffold summary — the single reporting path for both
@@ -615,8 +663,12 @@ export function reportScaffold(r, log = console.log) {
   if (r.geomLines) log(`  geometry  : ${r.geomLines} dimension line(s) track their value`);
   if (r.parts?.length) {
     log(`  parts     : ${r.parts.length} dimension(s) propose part bindings`);
-    for (const d of r.parts) log(`     ${d.param.padEnd(12)} ${d.ambiguous ? `${d.bound} bound, skipped: ambiguous` : `${d.bound} bound, ${d.skipped} skipped`}`);
+    for (const d of r.parts) {
+      const provenance = d.llm ? ` (${d.bound - d.llm} rule, ${d.llm} llm)` : '';
+      log(`     ${d.param.padEnd(12)} ${d.ambiguous ? `${d.bound} bound${provenance}, skipped: ambiguous` : `${d.bound} bound${provenance}, ${d.skipped} skipped`}`);
+    }
   }
+  if (r.llmParts?.asked) log(`  llm parts : ${r.llmParts.asked} dim(s) asked, ${r.llmParts.bound} binding(s) accepted, ${r.llmParts.rejected} id(s) rejected`);
   if (r.preserved) log(`  preserved : ${r.preserved} hand-made id-binding(s) kept`);
   if (r.preservedParts) log(`  preserved : ${r.preservedParts} hand-made part binding(s) kept, calibration re-derived`);
   if (r.vision.called) log(`  vision    : ${r.vision.dims} dim(s) recovered, ${r.vision.rejected} rejected by the plausibility check`);

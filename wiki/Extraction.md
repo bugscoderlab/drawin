@@ -44,7 +44,7 @@ Rules alone measured **27/34 (79%)** on the corpus. What rules can't see, by des
 - dimension callouts that never reach the text layer (cat's `3200`, trolley platform dims `980/700/2372`)
 - NAR trolley sheet's Material/Finishing (labels absent from the text layer)
 
-Merged (rules + one vision pass) measured **34/34 (100%)**, stable over 3 runs. Vision needs a key: `LADDER_LLM_PROVIDER` + the provider key in `.env`.
+Merged (rules + one vision pass) measured **34/34 (100%)**, stable over 3 runs. Vision needs a key: `LADDER_LLM_PROVIDER` + the provider key in `.env` (copy `.env.example`). The same key optionally enables LLM part-binding proposals at scaffold time (`docs/plans/llm-part-bindings.md`).
 
 ## The full pipeline
 

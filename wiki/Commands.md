@@ -33,6 +33,15 @@ node bin/ladder.mjs scaffold "file.pdf" [--force]
 
 Convert → hide outline duplicates → auto-propose bindings (title block + dimensions, geometry annotations, and part bindings for the geometry each dimension measures) → write `templates/<id>/` → build the editor HTML in `preview/`.
 
+With an LLM key in `.env` (see `.env.example`), two optional passes augment
+the scaffold: zero-dims **vision recovery** (outline-only annotations) and
+**LLM part proposals** — for each dimension the rules skipped candidates on,
+the model picks which elements the dimension measures (`spans` vs
+`attached`) from the same candidate pool; the engine derives ops and
+self-calibrates, rejects anything outside the pool, and the report shows the
+rule/llm split per dimension (`docs/plans/llm-part-bindings.md`). Without a
+key both passes are quiet no-ops — the server never needs one.
+
 Re-scaffold is **preserve-by-default**: an existing `templates/<id>/` is merged —
 per-param formulas, labels, named constant params, and hand-made id-bindings
 (`POST /bind`) whose ids still exist in the base art are kept; hand-made part
@@ -42,6 +51,13 @@ value bindings, and geometry proposals are recomputed from the current art.
 `--force` restores the from-scratch wipe.
 
 ## ladder serve
+
+The upload page shows an **LLM** pill in the header — green *LLM connected*
+when the server resolves a key (`.env` baked into the image on the VPS, same
+mechanism as `UPLOAD_TOKEN`), grey *rules only* when keyless. After an
+upload, the result panel reports the part-binding provenance: how many dims
+the model was consulted on, and how many bindings it contributed vs. how many
+ids the engine rejected.
 
 ```bash
 node bin/ladder.mjs serve [port]    # default 8123
@@ -85,4 +101,4 @@ npm test                    # build (bundle+manifest) then node --test
 UPDATE_SNAPSHOTS=1 npm test # regenerate render fixtures after an intentional change
 ```
 
-127 tests across snapshots (per-module fixtures + bundle↔ESM parity), registry matching, `ladder render`, geometry/part bindings, re-scaffold preservation, and conversion (the real-conversion cases skip when Inkscape/poppler are absent).
+137 tests across snapshots (per-module fixtures + bundle↔ESM parity), registry matching, `ladder render`, geometry/part bindings, LLM part proposals (fake-call), re-scaffold preservation, and conversion (the real-conversion cases skip when Inkscape/poppler are absent).
