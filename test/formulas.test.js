@@ -80,7 +80,9 @@ test('1C.8b e2e: scaffold + fake LLM -> structural formula + constant param -> r
   // last dim = previous dim * 0.3 + offset (offset chosen to reproduce the value).
   let sawGeometry = false;
   const llm = async ({ text }) => {
-    sawGeometry = /axis=[xy] textPos=\(/u.test(text);
+    // sticky: the scaffold makes several LLM calls (formulas + part proposals);
+    // the geometry assertion is about the formulas prompt specifically
+    sawGeometry = sawGeometry || /axis=[xy] textPos=\(/u.test(text);
     const list = JSON.parse(text.match(/Dimension parameters \(id, label, value in mm\):\n(\[.*?\])\n/s)[1]);
     const nums = list.filter((p) => /^[0-9.]+$/.test(p.value));
     const a = nums[nums.length - 2], b = nums[nums.length - 1];

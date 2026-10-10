@@ -143,6 +143,28 @@ test('POST /bind rejects ids absent from the base art with 400, accepts valid id
 
 // ---------- /bind requires UPLOAD_TOKEN when one is configured ----------
 
+test('GET /config reports llm connectivity as a boolean (never key material)', async (t) => {
+  const root = tempRoot(t, 'llmflag');
+  writeDemoTemplate(root);
+  // keyless env: every key var the resolver checks is scrubbed
+  const env = { DRAWIN_ROOT: root };
+  for (const k of ['LADDER_LLM_API_KEY', 'OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'GEMINI_API_KEY', 'GOOGLE_GENERATIVE_AI_API_KEY', 'GOOGLE_API_KEY']) env[k] = '';
+  const srv = await startServer({ env });
+  t.after(() => stopServer(srv));
+  const j = await (await fetch(`${srv.base}/config`)).json();
+  assert.equal(j.llm, false);
+  assert.equal(typeof j.llm, 'boolean');
+});
+
+test('GET /config llm flag is true when a key is configured', async (t) => {
+  const root = tempRoot(t, 'llmflag-on');
+  writeDemoTemplate(root);
+  const srv = await startServer({ env: { DRAWIN_ROOT: root, LADDER_LLM_API_KEY: 'test-key-123', LADDER_LLM_PROVIDER: 'openai' } });
+  t.after(() => stopServer(srv));
+  const j = await (await fetch(`${srv.base}/config`)).json();
+  assert.equal(j.llm, true);
+});
+
 test('POST /bind without the upload token is rejected with 401 when UPLOAD_TOKEN is set', async (t) => {
   const root = tempRoot(t, 'token');
   writeDemoTemplate(root);

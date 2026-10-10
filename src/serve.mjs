@@ -16,6 +16,12 @@ import { fileURLToPath } from 'node:url';
 import { scaffold } from './eval/scaffold.mjs';
 import { buildEditor } from './eval/makeEditor.mjs';
 import { svgIds } from './templates/authoring.mjs';
+import { llmConfig } from './config/env.mjs';
+
+// LLM availability for the page badge — boolean only, never key material.
+function llmConnected() {
+  try { return llmConfig().hasKey; } catch { return false; }
+}
 
 const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Ladder drawing — upload</title>
@@ -36,7 +42,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
  .spin{display:inline-block;width:14px;height:14px;border:2px solid #fff;border-top-color:transparent;border-radius:50%;animation:s .8s linear infinite;vertical-align:-2px;margin-right:8px}
  @keyframes s{to{transform:rotate(360deg)}}
 </style></head><body>
-<header>Laddertech — upload a PDF</header>
+<header>Laddertech — upload a PDF <span id="llm" class="pill" style="display:none"></span></header>
 <main>
   <div class="card">
     <div class="drop" id="drop">
@@ -52,6 +58,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
       <b id="rtitle"></b><a id="ropen" target="_blank">open in new tab ↗</a>
     </div>
     <div id="rprops" class="muted" style="margin-bottom:10px"></div>
+    <div id="rllm" class="muted" style="display:none;margin-bottom:10px"></div>
     <iframe id="rframe" style="width:100%;border:1px solid var(--line);border-radius:10px;background:#fff"></iframe>
   </div>
   <div class="card">
@@ -82,6 +89,10 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
      document.getElementById('rtitle').textContent=j.name+'  ('+j.id+')';
      document.getElementById('ropen').href=j.editor;
      document.getElementById('rprops').textContent='proposed: '+j.props.map(p=>p.id+'='+p.value).join('  ·  ');
+     const rllm=document.getElementById('rllm');
+     if(j.llm && j.llm.asked){ rllm.textContent='part bindings: model consulted on '+j.llm.asked+' dim(s) — '+j.llm.bound+' accepted, '+j.llm.rejected+' rejected'; rllm.style.display='block'; }
+     else if(j.parts && j.parts.some(d=>d.bound>0)){ rllm.textContent='part bindings: rules only (no LLM key on this server)'; rllm.style.display='block'; }
+     else rllm.style.display='none';
      const frame=document.getElementById('rframe');
      let ro=null;
      const fit=()=>{ try{ const d=frame.contentDocument; if(!d||!d.body) return; frame.style.height=(d.body.scrollHeight+24)+'px'; if(!ro&&window.ResizeObserver){ ro=new ResizeObserver(()=>{frame.style.height=(d.body.scrollHeight+24)+'px';}); ro.observe(d.body);} }catch(_){} };
@@ -97,7 +108,7 @@ const PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
    document.getElementById('list').innerHTML='<tr><th>id</th><th>name</th><th></th></tr>'+t.map(x=>
      '<tr><td>'+x.id+'</td><td>'+x.name+'</td><td>'+(x.editor?'<a href="/editor/'+x.id+'" target="_blank">editor ↗</a>':'—')+'</td></tr>').join('');
  }
- (async()=>{ try{ const c=await (await fetch('/config')).json(); if(c.tokenRequired && !uploadToken){ uploadToken=prompt('This server requires an upload token:')||''; localStorage.setItem('drawin_upload_token',uploadToken);} }catch(_){} })();
+ (async()=>{ try{ const c=await (await fetch('/config')).json(); if(c.tokenRequired && !uploadToken){ uploadToken=prompt('This server requires an upload token:')||''; localStorage.setItem('drawin_upload_token',uploadToken);} const b=document.getElementById('llm'); if(b){ b.textContent=c.llm?'LLM connected':'rules only'; b.style.display='inline-block'; if(!c.llm){b.style.background='#eef2f5';b.style.color='#657484';} } }catch(_){} })();
  loadList();
 </script></body></html>`;
 
@@ -148,7 +159,7 @@ export function serve(port = 8123) {
         return send(res, 200, 'application/json', JSON.stringify(listTemplates()));
 
       if (req.method === 'GET' && url.pathname === '/config')
-        return send(res, 200, 'application/json', JSON.stringify({ ok: true, tokenRequired: !!UPLOAD_TOKEN }));
+        return send(res, 200, 'application/json', JSON.stringify({ ok: true, tokenRequired: !!UPLOAD_TOKEN, llm: llmConnected() }));
 
       if (req.method === 'POST' && url.pathname === '/scaffold') {
         if (!tokenOk(req)) return send(res, 401, 'application/json', JSON.stringify({ ok: false, error: 'unauthorized (x-upload-token)' }));
@@ -163,6 +174,8 @@ export function serve(port = 8123) {
           ok: true, id: r.id,
           name: r.props.find((p) => p.id === 'productName')?.value || r.id,
           props: r.props.map((p) => ({ id: p.id, label: p.label, mode: p.mode, value: p.value })),
+          parts: r.parts,
+          llm: r.llmParts,
           editor: `/editor/${r.id}`,
         }));
       }
