@@ -225,13 +225,19 @@ const CAT_DIMS = [
 
 // The same fake serves both LLM passes: an image in the request means the
 // vision prompt; otherwise it is the formulas prompt.
+// The scaffold makes several kinds of LLM call (vision dims, formulas, part
+// proposals) — all may carry the page image. Vision calls are identified by
+// their prompt, not the image, so call-count assertions stay exact.
+const VISION_PROMPT = /dimension annotation/i;
 const dualFake = (visionDims, calls = []) => {
   const fn = async (req) => {
     calls.push(req);
-    if (req.image) return { text: JSON.stringify({ dims: visionDims }) };
+    if (req.image && VISION_PROMPT.test(req.text)) return { text: JSON.stringify({ dims: visionDims }) };
+    if (req.text.includes('Candidate elements')) return { text: '{"spans":[],"attached":[]}' };
     return { text: '{"formulas":{}}' };
   };
   fn.calls = calls;
+  fn.visionCalls = () => calls.filter((c) => c.image && VISION_PROMPT.test(c.text)).length;
   return fn;
 };
 
@@ -283,7 +289,7 @@ test('scaffold: no vision call when the text layer already yielded dims', { skip
   const llm = dualFake(CAT_DIMS);
   const r = await scaffold(join(repo, 'LSB-2607-003-RHC-R00.pdf'), { llm, id: 'vision-trolley', templatesDir: tmp });
   assert.ok(r.props.some((p) => /^dim\d+$/.test(p.id)), 'text-layer dims exist');
-  assert.equal(llm.calls.filter((c) => c.image).length, 0, 'vision prompt never sent');
+  assert.equal(llm.visionCalls(), 0, 'vision prompt never sent');
   assert.equal(r.vision.called, false);
 });
 
@@ -293,11 +299,11 @@ test('scaffold: second scaffold of the same source reuses vision.json, no new vi
   const tmp = mkdtempSync(join(tmpdir(), 'ladder-vision-'));
   const llm = dualFake(CAT_DIMS);
   await scaffold(CAT, { llm, id: 'vision-cache', templatesDir: tmp });
-  assert.equal(llm.calls.filter((c) => c.image).length, 1, 'first scaffold makes the vision call');
+  assert.equal(llm.visionCalls(), 1, 'first scaffold makes the vision call');
   assert.ok(existsSync(join(tmp, 'vision-cache', 'vision.json')), 'cache written beside the template');
 
   const r2 = await scaffold(CAT, { llm, id: 'vision-cache', templatesDir: tmp });
-  assert.equal(llm.calls.filter((c) => c.image).length, 1, 'cached result reused, vision LLM not called again');
+  assert.equal(llm.visionCalls(), 1, 'cached result reused, vision LLM not called again');
   assert.ok(r2.vision.called && r2.vision.dims >= 1, 'dims still recovered from the cached result');
 });
 
@@ -309,7 +315,7 @@ test('scaffold: a modified source PDF (different content hash) re-runs vision', 
   const llm = dualFake(CAT_DIMS);
   await scaffold(CAT, { llm, id: 'vision-cache', templatesDir: tmp });
   await scaffold(mod, { llm, id: 'vision-cache', templatesDir: tmp });
-  assert.equal(llm.calls.filter((c) => c.image).length, 2, 'changed source hash -> fresh vision call');
+  assert.equal(llm.visionCalls(), 2, 'changed source hash -> fresh vision call');
 });
 
 test('scaffold: a corrupt vision.json degrades to a fresh vision call, not a failure', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
@@ -318,7 +324,7 @@ test('scaffold: a corrupt vision.json degrades to a fresh vision call, not a fai
   writeFileSync(join(tmp, 'vision-cache', 'vision.json'), '{ not json');
   const llm = dualFake(CAT_DIMS);
   const r = await scaffold(CAT, { llm, id: 'vision-cache', templatesDir: tmp });
-  assert.equal(llm.calls.filter((c) => c.image).length, 1, 'corrupt cache -> fresh vision call');
+  assert.equal(llm.visionCalls(), 1, 'corrupt cache -> fresh vision call');
   assert.ok(r.vision.dims >= 1, 'scaffold still recovers dims');
   const c = JSON.parse(readFileSync(join(tmp, 'vision-cache', 'vision.json'), 'utf8'));
   assert.ok(c.hash && typeof c.reply === 'string', 'cache rewritten with the fresh result');
