@@ -382,12 +382,16 @@ test('part proposal: an element overlapping both ends forfeits the whole dim (al
   assert.ok(bindings.some((b) => b.ids.includes('line1') && b.geom.op === 'stretchX'), 'the annotation proposal is unaffected');
 });
 
-test('part proposal: non-axis-aligned geometry in the box is ambiguous (all-or-nothing)', () => {
-  const rows = [...partRows, { id: 'tilted', x: 200, y: 300, w: 10, h: 10 }];
-  const svg = partSvg + '<path id="tilted" transform="matrix(0.7071,0.7071,-0.7071,0.7071,200,300)" d="M 0,0 H 10"/>';
+test('part proposal: a tilted candidate (<=12.5° band) classifies into the X family — no longer ambiguous', () => {
+  // 10° tilt: previously non-axis-aligned -> the whole dim was ambiguous;
+  // the orientation bands (#22) put it in the X family and today's rules
+  // simply skip it (it spans/attaches nothing on the measured axis).
+  const rows = [...partRows, { id: 'tilted', x: 200, y: 300, w: 98.5, h: 18 }];
+  const svg = partSvg + '<path id="tilted" transform="matrix(0.9848,0.1736,0,1,200,300)" d="M 0,0 H 100"/>';
   const { bindings, parts } = proposeGeometry(rows, partProps, svg);
-  assert.ok(!bindings.some((b) => b.ids.includes('barL') || b.ids.includes('barR')), 'nothing binds for the dim');
-  assert.deepEqual(parts, [{ param: 'dim1', bound: 0, skipped: 1, ambiguous: true }]);
+  assert.ok(bindings.some((b) => b.ids.includes('barL')) && bindings.some((b) => b.ids.includes('barR')), 'the span bars still bind');
+  assert.ok(!bindings.some((b) => b.ids.includes('tilted')), 'the tilted element is not a part');
+  assert.deepEqual(parts, [{ param: 'dim1', bound: 2, skipped: 1 }], 'classified and skipped — the dim is not ambiguous');
 });
 
 test('reportScaffold marks an ambiguous dimension "skipped: ambiguous"', () => {
@@ -412,6 +416,171 @@ test('reportScaffold prints per-dimension part bound/skipped counts', () => {
   const row = lines.find((l) => l.includes('dim1') && l.includes('bound'));
   assert.ok(row, `expected a per-dim parts row, got:\n${lines.join('\n')}`);
   assert.match(row, /4 bound, 2 skipped/);
+});
+
+// ---------- part bindings (#22): rotated candidates classify; axial span/attach ----------
+
+// A VERTICAL dim (the 003 dim4 shape: platform height). Line extent 250 px =
+// 2500 mm (s = 0.1 px/mm); datum plane y=200 (the matrix translation end),
+// moving plane y=450. A ~60° stringer pair spans it; a 53° tread rides the
+// moving plane.
+const SQ3 = Math.sqrt(3) / 2;                 // sin(60°)
+const STR_LEN = 250 / SQ3;                    // user length with a 250 px rise
+const axialPartSvg = '<svg xmlns="http://www.w3.org/2000/svg">'
+  + '<path id="vline" transform="matrix(1,0,0,1,100,200)" d="M 0,0 V 250"/>'
+  + '<path id="va1" d="M 0,0 l 2,-8 2,8 z" transform="matrix(1,0,0,1,98.25,196)"/>'
+  + '<path id="va2" d="M 0,0 l 2,8 2,-8 z" transform="matrix(1,0,0,1,98.25,448)"/>'
+  // local origin at the MOVING (bottom) end; far local end lands on the datum plane
+  + `<path id="strA" transform="matrix(0.5,${-SQ3},0,1,250,450)" d="M 0,0 H ${STR_LEN}"/>`
+  // local origin at the DATUM (top) end
+  + `<path id="strB" transform="matrix(0.5,${SQ3},0,1,250,200)" d="M 0,0 H ${STR_LEN}"/>`
+  + '</svg>';
+const axialPartRows = [
+  { id: 'vline', x: 100, y: 200, w: 0.5, h: 250 },
+  { id: 'va1', x: 98.25, y: 196, w: 4, h: 4 },
+  { id: 'va2', x: 98.25, y: 448, w: 4, h: 4 },
+  { id: 'strA', x: 250, y: 200, w: 0.5 * STR_LEN, h: 250 },
+  { id: 'strB', x: 250, y: 200, w: 0.5 * STR_LEN, h: 250 },
+];
+const axialPartProps = [{ id: 'dimV', value: '2500', geom: { vertical: true, glyphs: [{ id: 'tv1', x: 104, y: 300 }, { id: 'tv2', x: 104, y: 308 }] } }];
+
+test('part proposal: a diagonal spanning the dim extent binds stretchAxial, about on the datum side (both local orientations)', () => {
+  const { bindings, parts } = proposeGeometry(axialPartRows, axialPartProps, axialPartSvg);
+  const strA = bindings.find((b) => b.ids[0] === 'strA');
+  const strB = bindings.find((b) => b.ids[0] === 'strB');
+  assert.deepEqual(strA.geom, { op: 'stretchAxial', about: 'max', anchor: 2500 },
+    'origin end sits at the moving plane -> the far (datum-side) local end stays put');
+  assert.deepEqual(strB.geom, { op: 'stretchAxial', about: 'min', anchor: 2500 },
+    'origin end sits at the datum plane -> the local-origin end stays put');
+  assert.deepEqual(parts, [{ param: 'dimV', bound: 2, skipped: 0 }]);
+});
+
+test('part proposal: stretchAxial render pins the datum-side end of a rotated span', () => {
+  const { bindings } = proposeGeometry(axialPartRows, axialPartProps, axialPartSvg);
+  const b = bindings.find((x) => x.ids[0] === 'strA');
+  const { svg: out } = applyGeometry(axialPartSvg, [b], { dimV: '3000' });
+  const re = /<path\b[^>]*\bid="strA"[^>]*transform="([^"]*)"/;
+  const before = parseMatrix(axialPartSvg.match(re)[1]);
+  const after = parseMatrix(out.match(re)[1]);
+  const ratio = 3000 / 2500;
+  // the pinned end is the local-max end (about "max"): its user position
+  // (a*STR_LEN + e, b*STR_LEN + f) must stay exactly on the datum plane.
+  const pin = (m) => [m.a * STR_LEN + m.e, m.b * STR_LEN + m.f];
+  const p0 = pin(before), p1 = pin(after);
+  // (1e-3: the engine re-serialises matrices at 5 decimals)
+  assert.ok(Math.abs(p1[0] - p0[0]) < 1e-3 && Math.abs(p1[1] - p0[1]) < 1e-3, `pinned end ${p0} -> ${p1}`);
+  assert.ok(Math.abs(p1[1] - 200) < 1e-3, 'the pinned end sits on the datum plane (y=200)');
+  assert.ok(Math.abs(after.a - before.a * ratio) < 1e-4 && Math.abs(after.b - before.b * ratio) < 1e-4, 'the whole (a,b) column scales by the ratio');
+});
+
+test('part proposal: a diagonal attached to the moving plane binds shiftAxial at s/sin(alpha), to the digit', () => {
+  // 3-4-5 axis: (a,b) = (0.6,0.8), |(a,b)| = 1 exactly; sin(alpha) = |b|/|(a,b)|
+  // = 0.8 against the vertical measured axis -> s_along = 0.1/0.8 = 0.125.
+  const rows = [...axialPartRows, { id: 'tread', x: 330, y: 445, w: 12, h: 16 }];
+  const svg = axialPartSvg + '<path id="tread" transform="matrix(0.6,0.8,0,1,330,445)" d="M 0,0 H 20"/>';
+  const { bindings, parts } = proposeGeometry(rows, axialPartProps, svg);
+  const tread = bindings.find((b) => b.ids[0] === 'tread');
+  assert.deepEqual(tread.geom, { op: 'shiftAxial', anchor: 2500, pxPerUnit: 0.125 },
+    'rate = s / sin(alpha): the plane moves 0.1 px/mm vertically, the axis lands 0.8 of its travel on y');
+  assert.deepEqual(parts, [{ param: 'dimV', bound: 3, skipped: 0 }], '2 stringers + 1 tread');
+  // rendered: dim 2500 -> 3000 moves the tread rigidly along its own axis by
+  // 500 * 0.125 = 62.5 user units * (0.6, 0.8) = (37.5, 50)
+  const { svg: out } = applyGeometry(svg, [tread], { dimV: '3000' });
+  const m = parseMatrix(out.match(/<path\b[^>]*\bid="tread"[^>]*transform="([^"]*)"/)[1]);
+  assert.deepEqual(m, { a: 0.6, b: 0.8, c: 0, d: 1, e: 367.5, f: 495 });
+  // and its near projected point (bbox y-min) rides the moved plane: 445+50 = 495 = 450 + 500*0.1
+});
+
+test('part proposal: a diagonal whose projection overlaps both end planes, without matching a rule, still forfeits the dim', () => {
+  // projection y=180..470: longer than the extent (no span), near point far
+  // from the moving plane (no attach), yet it overlaps both end planes.
+  const L = 290 / SQ3;
+  const rows = [...axialPartRows, { id: 'wild', x: 250, y: 180, w: 0.5 * L, h: 290 }];
+  const svg = axialPartSvg + `<path id="wild" transform="matrix(0.5,${SQ3},0,1,250,180)" d="M 0,0 H ${L}"/>`;
+  const { bindings, parts } = proposeGeometry(rows, axialPartProps, svg);
+  assert.ok(!bindings.some((b) => b.ids.includes('strA') || b.ids.includes('strB') || b.ids.includes('wild')), 'nothing binds for the dim');
+  assert.deepEqual(parts, [{ param: 'dimV', bound: 0, skipped: 1, ambiguous: true }]);
+  assert.ok(bindings.some((b) => b.ids.includes('vline') && b.geom.op === 'stretchY'), 'the annotation proposal is unaffected');
+});
+
+test('part proposal: rotated annotation text in the box classifies, is skipped, never a part, never ambiguous', () => {
+  const rows = [...axialPartRows, { id: 'rotNote', x: 150, y: 300, w: 12, h: 16 }];
+  const svg = axialPartSvg + '<text id="rotNote" transform="matrix(0.6,0.8,0,1,150,300)">2500</text>';
+  const { bindings, parts } = proposeGeometry(rows, axialPartProps, svg);
+  assert.ok(!bindings.some((b) => b.ids.includes('rotNote')), 'rotated text never binds');
+  assert.deepEqual(parts, [{ param: 'dimV', bound: 2, skipped: 1 }], 'the stringers still bind; the text is a plain skip');
+});
+
+test('part proposal: a rotated candidate without a usable path extent is skipped, reported, never ambiguous', () => {
+  const rows = [...axialPartRows, { id: 'rotRect', x: 150, y: 300, w: 12, h: 16 }];
+  const svg = axialPartSvg + '<rect id="rotRect" transform="matrix(0.6,0.8,0,1,150,300)" width="12" height="16"/>';
+  const { bindings, parts } = proposeGeometry(rows, axialPartProps, svg);
+  assert.ok(!bindings.some((b) => b.ids.includes('rotRect')), 'no d extent -> no axial op');
+  assert.deepEqual(parts, [{ param: 'dimV', bound: 2, skipped: 1 }]);
+});
+
+// ---------- #22 real art: 003 dim4 (platform height) and the axial rules ----------
+
+// INVESTIGATION FINDING (locked here so a converter change can't silently
+// reopen it): the Inkscape PDF import gives every PATH a scale/flip matrix
+// `matrix(1.3333,0,0,-1.3333,e,f)` — the staircase stringers' rotation is
+// baked into their path data ("M 0,0 -120.043,197.853"), not into the
+// matrix. The only elements with rotated matrices are the vertical dim
+// TEXTS. Spec #20's classification measures θ = atan2(b,a) FROM THE MATRIX,
+// so every path candidate on this art lands in the X/Y family and no axial
+// rule can ever engage (there is nothing to classify as AXIAL). An axial
+// binding for path1492 would also have no valid render: stretchAxial scales
+// the (a,b) column, which is horizontal here. Making the staircase follow
+// dim4 needs either an art-normalisation pass (rewrite single-segment
+// diagonal paths into rotated frames) or a path-data-level engine op —
+// both are outside ticket #22's proposal-only scope.
+test('#22 real art: 003 dim4 = 2500; the staircase diagonals live in path data, so the proposal stays axis-aligned and the dim stays ambiguous', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'ladder-axial-'));
+  const r = await scaffold(join(repo, 'LSB-2607-003-RHC-R00.pdf'), { llm: false, id: 'geo-003-axial', templatesDir: tmp });
+  // The spec evidence pack says dim4 = 2500 is the platform height — the
+  // scaffold confirms the positional dim ids on this PDF.
+  assert.equal(r.props.find((p) => p.id === 'dim4')?.value, '2500');
+
+  const dir = join(tmp, 'geo-003-axial');
+  const clean = readFileSync(join(dir, 'base.clean.svg'), 'utf8');
+  const rows = parseQueryAll(execFileSync('inkscape', ['--query-all', join(dir, 'base.clean.svg')], { encoding: 'utf8', maxBuffer: 1 << 28 }));
+
+  // The two stringers are path1491/path1492 (diagonal path data, measured
+  // from base.clean.svg): their matrices are axis-aligned, their d is not.
+  for (const id of ['path1491', 'path1492']) {
+    const tag = clean.match(new RegExp(`<path\\b[^>]*?\\bid="${id}"[^>]*>`))[0];
+    const m = parseMatrix(tag.match(/transform="([^"]*)"/)[1]);
+    assert.equal(m.b, 0, `${id}: the stringer's matrix carries no rotation (b=0) — θ=0, X-family`);
+    assert.match(tag, /d="M 0,0 -/u, `${id}: the diagonal lives in the path data`);
+    assert.ok(rows.some((x) => x.id === id && x.w > 0 && x.h > 0));
+  }
+  // ... and so is every other non-text element in the drawing: nothing with
+  // a rotated matrix exists for the classifier to call AXIAL.
+  const rotatedPaths = rows.filter((row) => {
+    const m = clean.match(new RegExp(`<[a-zA-Z][^>]*?\\bid="${row.id}"[^>]*?\\btransform="matrix\\(([-\\d.eE]+),([-\\d.eE]+),`));
+    return m && Math.abs(+m[2]) > 1e-9 && !/^<text\b/u.test(m[0]);
+  }).map((row) => row.id);
+  assert.deepEqual(rotatedPaths, [], 'no non-text element in the whole drawing has a rotated matrix');
+
+  // Consequences, locked: path1492's vertical projection spans dim4 within
+  // SPAN_TOL (exterr +5.4, ends ±3.3 of the planes, tol ±25.9) — under the
+  // X-family rules it WOULD bind stretchY (an angle-shearing op the staircase
+  // must not get). path1491 stops 29 px short of the moving plane (3 px over
+  // tolerance — the tread/stringer gap). But the whole dim is forfeited
+  // anyway: the sheet-frame lines path7315/path7320 (x=43.8/26.4, full
+  // height 732/767 px, 1 px wide) overlap BOTH end planes, and the
+  // all-or-nothing rule (#11, unchanged by #22) drops everything.
+  const d4 = r.parts.find((d) => d.param === 'dim4');
+  assert.deepEqual(d4, { param: 'dim4', bound: 0, skipped: 974, ambiguous: true });
+  for (const id of ['path7315', 'path7320']) {
+    const row = rows.find((x) => x.id === id);
+    assert.ok(row && row.h > 700, `${id} is a full-height frame line (the ambiguity trigger)`);
+  }
+
+  // and the shape of the whole proposal: no axial op is proposed for ANY dim
+  // of this drawing — the art cannot support one (see the finding above).
+  const tpl = JSON.parse(readFileSync(join(dir, 'template.json'), 'utf8'));
+  assert.ok(!tpl.bindings.some((b) => b.geom?.op?.endsWith('Axial')), 'no axial bindings on this conversion');
 });
 
 // ---------- real art: the footprint dimension of the trolley template ----------
@@ -625,9 +794,18 @@ test('#11 e2e: re-scaffolded 004 -> dim1=1000 widens the cap; bars land on the s
     assert.equal(b.geom.pxPerUnit, 0.0799946, "full rate: the dim's own extent/value");
     assert.equal(b.geom.anchor, 500);
   }
+  // datum side of the dim1 edit. path4321 is a vertical platform rail: #22's
+  // classification replaced "rotated candidate -> ambiguous" and exempted
+  // rotated annotation texts, so dim4 (the 900 mm platform height — the old
+  // rule forfeited it to the rotated dim-text glyphs of neighbouring dims in
+  // its locality box) is no longer ambiguous and its span rule now binds
+  // path4321 to dim4, the height it actually measures. The dim1 edit must
+  // still leave all three untouched.
   for (const id of ['path4321', 'path7808', 'path4304']) {
-    assert.ok(!tpl.bindings.some((b) => (b.ids || []).includes(id)), `${id} (datum side) never binds`);
+    assert.ok(!tpl.bindings.some((b) => (b.ids || []).includes(id) && b.param === 'dim1'), `${id} (datum side) never binds to dim1`);
   }
+  const rail = tpl.bindings.find((b) => (b.ids || []).includes('path4321'));
+  assert.deepEqual(rail?.geom, { op: 'stretchY', about: 'max', anchor: 900 }, '#22 frees dim4: its platform rail binds the span it measures');
 
   // render with dim1 = 1000: every cap bar doubles in width, the datum-side
   // end stays pinned, the moving (rail) end tracks the value, and the rail
