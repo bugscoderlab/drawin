@@ -5,13 +5,13 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
-import { applyGeometry, parseMatrix } from '../src/templates/geometry.mjs';
+import { applyGeometry, parseMatrix, localAxis } from '../src/templates/geometry.mjs';
 import { renderTemplate } from '../src/templates/render.mjs';
 import { parseQueryAll } from '../src/templates/authoring.mjs';
 import { proposeGeometry, scaffold, reportScaffold, SPAN_TOL } from '../src/eval/scaffold.mjs';
@@ -221,6 +221,135 @@ test('axial ops report unusable extents and degenerate axes, never thrown', () =
   // failed rows leave their elements untouched
   assert.match(out, /<path id="nod"\/>/);
   assert.match(out, /matrix\(0,0,0,1,5,6\)/);
+});
+
+// ---------- #23: the d-level axial op — axis-aligned matrix, diagonal path data ----------
+
+// The #20 finding: on converted art the rotation lives in path DATA (the
+// matrix is an axis-aligned scale/flip), so the element's local axis is the
+// unit vector of the dominant straight run in d, recovered by localAxis()
+// and shared by the engine and the proposal stage.
+
+test('localAxis recovers the dominant straight run of a bent path (abs+rel), projection extent included', () => {
+  const ax = localAxis(null, 'M 0,0 L 30,40 l 0,100');
+  // runs: (0,0)->(30,40) len 50 and (30,40)->(30,140) len 100 -> dominant is vertical
+  assert.deepEqual(ax.l, [0, 1]);
+  assert.equal(ax.lo, 0);
+  assert.equal(ax.hi, 140);
+  assert.deepEqual(ax.pLo, [0, 0], 'projection-min anchor');
+  assert.deepEqual(ax.pHi, [30, 140], 'projection-max anchor');
+});
+
+test('localAxis maps the axis through the matrix into user space (flip honoured)', () => {
+  const ax = localAxis({ a: 2, b: 0, c: 0, d: -2, e: 10, f: 20 }, 'M 0,0 L 30,40');
+  // local (0.6,0.8) -> user (1.2,-1.6) -> unit (0.6,-0.8)
+  assert.ok(Math.abs(ax.u[0] - 0.6) < 1e-9 && Math.abs(ax.u[1] + 0.8) < 1e-9, JSON.stringify(ax.u));
+  assert.equal(ax.lo, 0);
+  assert.equal(ax.hi, 50);
+});
+
+test('localAxis: curves-only and degenerate paths have no axis; arcs are flagged', () => {
+  assert.equal(localAxis(null, 'M 0,0 C 1,2 3,4 5,6'), null, 'no straight segment');
+  assert.equal(localAxis(null, 'M 0,0 L 0,0'), null, 'degenerate zero-length runs');
+  assert.equal(localAxis(null, 'M 0,0 z'), null, 'a lone close is no run');
+  const arc = localAxis(null, 'M 0,0 L 10,0 A 5,5 0 0 1 20,0');
+  assert.ok(arc && arc.arc, 'arc flag set; the straight run is still recovered');
+  assert.deepEqual(arc.l, [1, 0]);
+});
+
+test('stretchAxial (d level) about:"min" pins the projection-min end; the far end rides the axis', () => {
+  const { svg: out, report } = applyGeometry(axialSvg('<path id="s" transform="matrix(2,0,0,2,10,20)" d="M 0,0 L 30,40"/>'), [
+    { ids: ['s'], param: 'dim', geom: { op: 'stretchAxial', anchor: 200 } },   // omitted about = "min"
+  ], { dim: '300' });
+  assert.equal(report[0].ok, true, JSON.stringify(report[0]));
+  // ratio 1.5, u=(0.6,0.8): the linear map p' = p + 0.5·(p·u)·u sends
+  // (30,40) (p·u=50) to (45,60); p0 = lo = 0 -> no translation fix, and the
+  // matrix column is NOT scaled (the axis is not the matrix's x column).
+  const m = parseMatrix(out.match(/transform="([^"]*)"/)[1]);
+  assert.deepEqual(m, { a: 2, b: 0, c: 0, d: 2, e: 10, f: 20 });
+  assert.match(out, /d="M 0,0 L 45,60"/);
+  // rendered: the far end user position before (70,100) -> (100,140): 1.5x
+  // further along the SAME user direction (60,80)/100 — angle preserved.
+});
+
+test('stretchAxial (d level) about:"max" pins the far end in user space via the translation fix', () => {
+  const { svg: out, report } = applyGeometry(axialSvg('<path id="s" transform="matrix(2,0,0,2,10,20)" d="M 0,0 L 30,40"/>'), [
+    { ids: ['s'], param: 'dim', geom: { op: 'stretchAxial', about: 'max', anchor: 200 } },
+  ], { dim: '300' });
+  assert.equal(report[0].ok, true, JSON.stringify(report[0]));
+  // p0 = hi = 50; fix = (1-1.5)·50·M·u = -25·(1.2,1.6) = (-30,-40) -> (e,f) = (-20,-20)
+  const m = parseMatrix(out.match(/transform="([^"]*)"/)[1]);
+  assert.deepEqual(m, { a: 2, b: 0, c: 0, d: 2, e: -20, f: -20 });
+  assert.match(out, /d="M 0,0 L 45,60"/);
+  // the pinned end: before (2·30+10, 2·40+20) = (70,100); after (2·45-20, 2·60-20) = (70,100)
+});
+
+test('stretchAxial (d level) deforms a two-segment bend exactly', () => {
+  const { svg: out, report } = applyGeometry(axialSvg('<path id="s" transform="matrix(1,0,0,1,10,20)" d="M 0,0 L 30,40 L 30,140"/>'), [
+    { ids: ['s'], param: 'dim', geom: { op: 'stretchAxial', about: 'max', anchor: 100 } },
+  ], { dim: '200' });
+  assert.equal(report[0].ok, true, JSON.stringify(report[0]));
+  // dominant run: the 100-long vertical leg -> u=(0,1); the linear map is
+  // P(x,y)=(x,2y): both legs deform exactly.
+  const m = parseMatrix(out.match(/transform="([^"]*)"/)[1]);
+  assert.deepEqual(m, { a: 1, b: 0, c: 0, d: 1, e: 10, f: -120 });
+  assert.match(out, /d="M 0,0 L 30,80 L 30,280"/);
+  // pinned user end: (30,140)+(10,20) = (40,160) before and after.
+});
+
+test('stretchAxial (d level) maps curve control points, so curves deform exactly', () => {
+  const { svg: out, report } = applyGeometry(axialSvg('<path id="s" transform="matrix(1,0,0,1,10,20)" d="M 0,0 V 40 C 10,50 -10,60 0,70"/>'), [
+    { ids: ['s'], param: 'dim', geom: { op: 'stretchAxial', about: 'max', anchor: 100 } },
+  ], { dim: '200' });
+  assert.equal(report[0].ok, true, JSON.stringify(report[0]));
+  // u=(0,1) from the V leg; P(x,y)=(x,2y); the V collapses to L (the map
+  // mixes x and y in general); p0 = hi = 70 -> fix (0,-70).
+  const m = parseMatrix(out.match(/transform="([^"]*)"/)[1]);
+  assert.deepEqual(m, { a: 1, b: 0, c: 0, d: 1, e: 10, f: -50 });
+  assert.match(out, /d="M 0,0 L 0,80 C 10,100 -10,120 0,140"/);
+  // exactness, independently checked: the cubic B(0.5) = (P0+3c1+3c2+P1)/8
+  // is (0,55) before and (0,110) after — exactly P, no flattening.
+});
+
+test('stretchAxial (d level) reports arcs and curve-only paths, never thrown', () => {
+  const svg = axialSvg(
+    '<path id="arc" transform="matrix(1,0,0,1,0,0)" d="M 0,0 L 30,40 A 5,5 0 0 1 50,60"/>'
+    + '<path id="curvy" transform="matrix(1,0,0,1,0,0)" d="M 0,0 C 1,2 3,4 5,6"/>'
+    + '<path id="straight" transform="matrix(1,0,0,1,0,0)" d="M 0,0 L 30,40"/>',
+  );
+  const { svg: out, report } = applyGeometry(svg, [
+    { ids: ['arc'], param: 'd', geom: { op: 'stretchAxial', anchor: 100 } },
+    { ids: ['curvy'], param: 'd', geom: { op: 'stretchAxial', anchor: 100 } },
+    { ids: ['straight'], param: 'd', geom: { op: 'stretchAxial', anchor: 100 } },
+  ], { d: '150' });
+  assert.equal(report[0].ok, false);
+  assert.match(report[0].reason, /arc/, 'a non-uniform map cannot deform an arc exactly');
+  assert.equal(report[1].ok, false);
+  assert.match(report[1].reason, /no local extent/, 'no straight segment -> no axis -> no op');
+  assert.equal(report[2].ok, true, 'a diagonal straight d is the d-level case');
+  assert.match(out, /d="M 0,0 L 30,40 A 5,5 0 0 1 50,60"/, 'failed rows leave d untouched');
+});
+
+test('shiftAxial (d level) translates along the data axis in user space, matrix flip included', () => {
+  const svg = axialSvg('<path id="s" transform="matrix(1.3333333,0,0,-1.3333333,50,60)" d="M 0,0 L -120.043,197.853"/>');
+  const { svg: out, report } = applyGeometry(svg, [
+    { ids: ['s'], param: 'dim', geom: { op: 'shiftAxial', anchor: 100, pxPerUnit: 0.5 } },
+  ], { dim: '300' });
+  assert.equal(report[0].ok, true, JSON.stringify(report[0]));
+  const m = parseMatrix(out.match(/transform="([^"]*)"/)[1]);
+  const len = Math.hypot(-120.043, 197.853);
+  const ux = -120.043 / len, uy = 197.853 / len;
+  // direction = M·u normalized: the d=-1.3333 flip flips the y component —
+  // this is NOT the matrix's (a,b) column (1.3333,0).
+  assert.ok(Math.abs(m.e - (50 + ux * 100)) < 1e-4 && Math.abs(m.f - (60 - uy * 100)) < 1e-4, JSON.stringify(m));
+});
+
+test('shiftAxial (d level) reports a path with no straight segment', () => {
+  const { report } = applyGeometry(axialSvg('<path id="s" transform="matrix(1,0,0,1,0,0)" d="M 0,0 C 1,2 3,4 5,6"/>'), [
+    { ids: ['s'], param: 'dim', geom: { op: 'shiftAxial', anchor: 100, pxPerUnit: 0.5 } },
+  ], { dim: '300' });
+  assert.equal(report[0].ok, false);
+  assert.match(report[0].reason, /no straight segment/);
 });
 
 // ---------- proposeGeometry units ----------
@@ -519,6 +648,142 @@ test('part proposal: a rotated candidate without a usable path extent is skipped
   assert.deepEqual(parts, [{ param: 'dimV', bound: 2, skipped: 1 }]);
 });
 
+// ---------- part bindings (#23): data-diagonal candidates (003-shaped art) ----------
+
+// Same vertical dim as the #22 fixture (line extent 250 px = 2500 mm, datum
+// plane y=200, moving plane y=450), but the stringers carry their angle in
+// path DATA — axis-aligned identity matrices, diagonal d. The classification
+// recovers the axis from d (the #20 finding: converted art bakes rotation
+// into path data), and the projected-bbox checks run on the d-level geometry
+// (anchor endpoints through the matrix), not the matrix angle.
+const RUN60 = 250 / Math.sqrt(3);              // horizontal run of a 60° stringer (rise 250)
+const dataAxialSvg = '<svg xmlns="http://www.w3.org/2000/svg">'
+  + '<path id="vline" transform="matrix(1,0,0,1,100,200)" d="M 0,0 V 250"/>'
+  + '<path id="va1" d="M 0,0 l 2,-8 2,8 z" transform="matrix(1,0,0,1,98.25,196)"/>'
+  + '<path id="va2" d="M 0,0 l 2,8 2,-8 z" transform="matrix(1,0,0,1,98.25,448)"/>'
+  // local origin at the MOVING (bottom, y=450) end; the far local end lands
+  // on the datum plane (user y=200) — the matrix carries no rotation
+  + `<path id="strC" transform="matrix(1,0,0,1,250,450)" d="M 0,0 L ${RUN60},-250"/>`
+  // local origin at the DATUM (top, y=200) end
+  + `<path id="strD" transform="matrix(1,0,0,1,250,200)" d="M 0,0 L ${RUN60},250"/>`
+  + '</svg>';
+const dataAxialRows = [
+  { id: 'vline', x: 100, y: 200, w: 0.5, h: 250 },
+  { id: 'va1', x: 98.25, y: 196, w: 4, h: 4 },
+  { id: 'va2', x: 98.25, y: 448, w: 4, h: 4 },
+  { id: 'strC', x: 250, y: 200, w: RUN60, h: 250 },
+  { id: 'strD', x: 250, y: 200, w: RUN60, h: 250 },
+];
+
+test('part proposal: a data-diagonal spanning the dim binds stretchAxial, about on the datum side (both local orientations)', () => {
+  const { bindings, parts } = proposeGeometry(dataAxialRows, axialPartProps, dataAxialSvg);
+  const strC = bindings.find((b) => b.ids[0] === 'strC');
+  const strD = bindings.find((b) => b.ids[0] === 'strD');
+  assert.deepEqual(strC.geom, { op: 'stretchAxial', about: 'max', anchor: 2500 },
+    'local origin at the moving plane -> the far (datum-side) projection end stays put');
+  assert.deepEqual(strD.geom, { op: 'stretchAxial', about: 'min', anchor: 2500 },
+    'local origin at the datum plane -> the projection-min end stays put');
+  assert.deepEqual(parts, [{ param: 'dimV', bound: 2, skipped: 0 }]);
+});
+
+test('part proposal: the data-diagonal span renders — the datum-side end stays pinned in user space', () => {
+  const { bindings } = proposeGeometry(dataAxialRows, axialPartProps, dataAxialSvg);
+  const b = bindings.find((x) => x.ids[0] === 'strC');
+  const { svg: out } = applyGeometry(dataAxialSvg, [b], { dimV: '3000' });
+  const re = /<path\b[^>]*\bid="strC"[^>]*>/;
+  const before = parseMatrix(dataAxialSvg.match(re)[0].match(/transform="([^"]*)"/)[1]);
+  const afterTag = out.match(re)[0];
+  const after = parseMatrix(afterTag.match(/transform="([^"]*)"/)[1]);
+  // the pinned end is the local far end (about "max"): user position from the
+  // rewritten d (P linear, fix applied) must stay on the datum plane (y=200).
+  const dAfter = afterTag.match(/\bd="([^"]*)"/)[1];
+  const ax = localAxis(after, dAfter);
+  assert.ok(ax, dAfter);
+  const pinLocal = [ax.pHi[0], ax.pHi[1]];   // pHi in the rewritten d
+  const pinUser = [after.a * pinLocal[0] + after.e, after.d * pinLocal[1] + after.f];
+  const pinBefore = [before.a * RUN60 + before.e, before.d * -250 + before.f];
+  assert.ok(Math.abs(pinUser[0] - pinBefore[0]) < 1e-3 && Math.abs(pinUser[1] - pinBefore[1]) < 1e-3,
+    `pinned end ${pinBefore} -> ${pinUser}`);
+  assert.ok(Math.abs(pinUser[1] - 200) < 1e-3, 'the pinned end sits on the datum plane (y=200)');
+});
+
+test('part proposal: a data-diagonal attached to the moving plane binds shiftAxial at s/comp, to the digit', () => {
+  // 3-4-5 data axis (local (0.6,0.8)); identity matrix; the near projected
+  // point sits on the moving plane y=450. Length 40: a tread-sized member
+  // (the proposal's noise gate keeps sub-tolerance fragments axis-aligned).
+  const rows = [...dataAxialRows, { id: 'tread', x: 330, y: 450, w: 24, h: 32 }];
+  const svg = dataAxialSvg + '<path id="tread" transform="matrix(1,0,0,1,330,450)" d="M 0,0 L 24,32"/>';
+  const { bindings, parts } = proposeGeometry(rows, axialPartProps, svg);
+  const tread = bindings.find((b) => b.ids[0] === 'tread');
+  assert.deepEqual(tread.geom, { op: 'shiftAxial', anchor: 2500, pxPerUnit: 0.125 },
+    'rate = s / (axis component on the measured axis): 0.1 / 0.8');
+  assert.deepEqual(parts, [{ param: 'dimV', bound: 3, skipped: 0 }], '2 stringers + 1 tread');
+  // rendered: dim 2500 -> 3000 moves the tread rigidly along its data axis by
+  // 500 * 0.125 = 62.5 user units * (0.6, 0.8) = (37.5, 50)
+  const { svg: out } = applyGeometry(svg, [tread], { dimV: '3000' });
+  const m = parseMatrix(out.match(/<path\b[^>]*\bid="tread"[^>]*transform="([^"]*)"/)[1]);
+  assert.deepEqual(m, { a: 1, b: 0, c: 0, d: 1, e: 367.5, f: 500 });
+});
+
+test('part proposal: a data-diagonal whose projection overlaps both end planes, without matching a rule, still forfeits the dim', () => {
+  const LR = 290 / Math.sqrt(3);
+  const rows = [...dataAxialRows, { id: 'wild', x: 250, y: 180, w: LR, h: 290 }];
+  const svg = dataAxialSvg + `<path id="wild" transform="matrix(1,0,0,1,250,470)" d="M 0,0 L ${LR},-290"/>`;
+  const { bindings, parts } = proposeGeometry(rows, axialPartProps, svg);
+  assert.ok(!bindings.some((b) => b.ids.includes('strC') || b.ids.includes('strD') || b.ids.includes('wild')), 'nothing binds for the dim');
+  assert.deepEqual(parts, [{ param: 'dimV', bound: 0, skipped: 1, ambiguous: true }]);
+  assert.ok(bindings.some((b) => b.ids.includes('vline') && b.geom.op === 'stretchY'), 'the annotation proposal is unaffected');
+});
+
+test('part proposal: a data tilt within the band keeps the X/Y family — a diagonal arc path is skipped, not ambiguous', () => {
+  // 10° data tilt: within ±12.5° of horizontal -> X family, same as a tilted
+  // matrix (#22) but recovered from d.
+  const rows = [...dataAxialRows, { id: 'tiltData', x: 200, y: 300, w: 98.5, h: 18 }];
+  const svg = dataAxialSvg + '<path id="tiltData" transform="matrix(1,0,0,1,200,300)" d="M 0,0 L 98.5,17.36"/>';
+  const { bindings, parts } = proposeGeometry(rows, axialPartProps, svg);
+  assert.ok(bindings.some((b) => b.ids.includes('strC')) && bindings.some((b) => b.ids.includes('strD')), 'the stringers still bind');
+  assert.ok(!bindings.some((b) => b.ids.includes('tiltData')), 'the band-tilted element is not axial');
+  assert.deepEqual(parts, [{ param: 'dimV', bound: 2, skipped: 1 }]);
+  // an AXIAL data path with an arc cannot be stretched exactly -> skipped,
+  // reported, never a part, never ambiguous (same rule as #22's no-extent
+  // case). Length 50 keeps it above the proposal's fragment gate so it
+  // reaches the axial rules at all.
+  const rows2 = [...dataAxialRows, { id: 'arcData', x: 300, y: 300, w: 50, h: 50 }];
+  const svg2 = dataAxialSvg + '<path id="arcData" transform="matrix(1,0,0,1,300,300)" d="M 0,0 L 30,40 A 10,10 0 0 1 50,30"/>';
+  const g2 = proposeGeometry(rows2, axialPartProps, svg2);
+  assert.ok(!g2.bindings.some((b) => b.ids.includes('arcData')), 'the arc path never binds');
+  assert.deepEqual(g2.parts, [{ param: 'dimV', bound: 2, skipped: 1 }]);
+});
+
+test('part proposal: a blob whose straight runs compete is not an axial member (dominance gate)', () => {
+  // The #11 rail-bolt shape: 'M 0,0 h 6 v 6 z'. Its hypotenuse (8.49) is the
+  // longest single run, but only 1.4x the legs — the element is a plate
+  // outline, not an axial member, and must keep the axis-aligned attach
+  // rule (shiftX rides the plane purely; shiftAxial would drift it off the
+  // plane laterally).
+  const rows = [...dataAxialRows, { id: 'bolt', x: 330, y: 446, w: 6, h: 6 }];
+  const svg = dataAxialSvg + '<path id="bolt" transform="matrix(1,0,0,1,330,446)" d="M 0,0 h 6 v 6 z"/>';
+  const { bindings, parts } = proposeGeometry(rows, axialPartProps, svg);
+  const bolt = bindings.find((b) => b.ids[0] === 'bolt');
+  assert.deepEqual(bolt?.geom, { op: 'shiftY', anchor: 2500, pxPerUnit: 0.1 },
+    'the bolt keeps the axis-aligned attach rule');
+  assert.deepEqual(parts, [{ param: 'dimV', bound: 3, skipped: 0 }], '2 stringers + the bolt');
+});
+
+test('part proposal: a sub-tolerance diagonal fragment keeps the axis-aligned attach (noise gate)', () => {
+  // The 003 dim1 arrowhead-fragment shape ('M 0,0 1.642,-1.562', ~2 px):
+  // shorter than the span tolerance band it is a fragment, not an axial
+  // member — the axial op would ride the plane but drift it laterally.
+  // Gate: |M·l|·bestLen = 20 < tol = 25.
+  const rows = [...dataAxialRows, { id: 'tick', x: 330, y: 446, w: 3, h: 3 }];
+  const svg = dataAxialSvg + '<path id="tick" transform="matrix(1,0,0,1,330,450)" d="M 0,0 L 1.642,-1.562"/>';
+  const { bindings, parts } = proposeGeometry(rows, axialPartProps, svg);
+  const tick = bindings.find((b) => b.ids[0] === 'tick');
+  assert.deepEqual(tick?.geom, { op: 'shiftY', anchor: 2500, pxPerUnit: 0.1 },
+    'the fragment rides the plane at the full rate, axis-aligned');
+  assert.deepEqual(parts, [{ param: 'dimV', bound: 3, skipped: 0 }], '2 stringers + the fragment');
+});
+
 // ---------- #22 real art: 003 dim4 (platform height) and the axial rules ----------
 
 // INVESTIGATION FINDING (locked here so a converter change can't silently
@@ -526,14 +791,16 @@ test('part proposal: a rotated candidate without a usable path extent is skipped
 // `matrix(1.3333,0,0,-1.3333,e,f)` — the staircase stringers' rotation is
 // baked into their path data ("M 0,0 -120.043,197.853"), not into the
 // matrix. The only elements with rotated matrices are the vertical dim
-// TEXTS. Spec #20's classification measures θ = atan2(b,a) FROM THE MATRIX,
-// so every path candidate on this art lands in the X/Y family and no axial
-// rule can ever engage (there is nothing to classify as AXIAL). An axial
-// binding for path1492 would also have no valid render: stretchAxial scales
-// the (a,b) column, which is horizontal here. Making the staircase follow
-// dim4 needs either an art-normalisation pass (rewrite single-segment
-// diagonal paths into rotated frames) or a path-data-level engine op —
-// both are outside ticket #22's proposal-only scope.
+// TEXTS. Spec #20's #22 classification measured θ = atan2(b,a) FROM THE
+// MATRIX, so every path candidate on this art landed in the X/Y family and
+// no axial rule could ever engage. Ticket #23 added the path-data level:
+// the axis is recovered from the dominant straight run of d (localAxis),
+// the engine applies the linear map at the d level, and the classifier
+// calls a data diagonal AXIAL — see the #23 real-art test below for the
+// stringer's rule match and the rendered proof. This #22 test locks what
+// has NOT changed: the dim is still forfeited all-or-nothing by the
+// full-height sheet-frame lines, so the scaffolded template still carries
+// no axial binding.
 test('#22 real art: 003 dim4 = 2500; the staircase diagonals live in path data, so the proposal stays axis-aligned and the dim stays ambiguous', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
   const tmp = mkdtempSync(join(tmpdir(), 'ladder-axial-'));
   const r = await scaffold(join(repo, 'LSB-2607-003-RHC-R00.pdf'), { llm: false, id: 'geo-003-axial', templatesDir: tmp });
@@ -550,7 +817,7 @@ test('#22 real art: 003 dim4 = 2500; the staircase diagonals live in path data, 
   for (const id of ['path1491', 'path1492']) {
     const tag = clean.match(new RegExp(`<path\\b[^>]*?\\bid="${id}"[^>]*>`))[0];
     const m = parseMatrix(tag.match(/transform="([^"]*)"/)[1]);
-    assert.equal(m.b, 0, `${id}: the stringer's matrix carries no rotation (b=0) — θ=0, X-family`);
+    assert.equal(m.b, 0, `${id}: the stringer's matrix carries no rotation (b=0) — #23 recovers the axis from d`);
     assert.match(tag, /d="M 0,0 -/u, `${id}: the diagonal lives in the path data`);
     assert.ok(rows.some((x) => x.id === id && x.w > 0 && x.h > 0));
   }
@@ -562,14 +829,14 @@ test('#22 real art: 003 dim4 = 2500; the staircase diagonals live in path data, 
   }).map((row) => row.id);
   assert.deepEqual(rotatedPaths, [], 'no non-text element in the whole drawing has a rotated matrix');
 
-  // Consequences, locked: path1492's vertical projection spans dim4 within
-  // SPAN_TOL (exterr +5.4, ends ±3.3 of the planes, tol ±25.9) — under the
-  // X-family rules it WOULD bind stretchY (an angle-shearing op the staircase
-  // must not get). path1491 stops 29 px short of the moving plane (3 px over
-  // tolerance — the tread/stringer gap). But the whole dim is forfeited
-  // anyway: the sheet-frame lines path7315/path7320 (x=43.8/26.4, full
-  // height 732/767 px, 1 px wide) overlap BOTH end planes, and the
-  // all-or-nothing rule (#11, unchanged by #22) drops everything.
+  // Consequences, locked: the dim is forfeited by the sheet-frame lines
+  // path7315/path7320 (x=43.8/26.4, full height 732/767 px, 1 px wide)
+  // overlapping BOTH end planes — the all-or-nothing rule (#11, unchanged
+  // by #22/#23) drops every rule-matched binding with them (path1492's
+  // stretchAxial among them — the #23 test below re-derives that rule match
+  // and proves the render by the documented hand-accept path). The
+  // path1491 gap is measured there too: it stops 29 px short of the moving
+  // plane (3 px over tolerance).
   const d4 = r.parts.find((d) => d.param === 'dim4');
   assert.deepEqual(d4, { param: 'dim4', bound: 0, skipped: 974, ambiguous: true });
   for (const id of ['path7315', 'path7320']) {
@@ -577,10 +844,137 @@ test('#22 real art: 003 dim4 = 2500; the staircase diagonals live in path data, 
     assert.ok(row && row.h > 700, `${id} is a full-height frame line (the ambiguity trigger)`);
   }
 
-  // and the shape of the whole proposal: no axial op is proposed for ANY dim
-  // of this drawing — the art cannot support one (see the finding above).
+  // and the shape of the whole proposal: no axial op SURVIVES on this
+  // drawing — the frame lines forfeit every dim whose box contains them,
+  // and the sub-tolerance diagonal fragments (arrowhead halves like
+  // path1691/1692) stay axis-aligned via the noise gate. The conservative
+  // report is unchanged by #23 (see the finding above).
   const tpl = JSON.parse(readFileSync(join(dir, 'template.json'), 'utf8'));
   assert.ok(!tpl.bindings.some((b) => b.geom?.op?.endsWith('Axial')), 'no axial bindings on this conversion');
+});
+
+// ---------- #23 real art: the 003 stringer follows dim4 (rule match + rendered proof) ----------
+
+// The #23 proof on the flagship drawing. FINDING (locked with evidence):
+// path1492 — the far staircase stringer — rule-matches the axial span
+// (data-diagonal classification, d-level projection 216.9..480.7 against
+// the dim4 planes 218.9..477.6, tol ±25.9). path1491 — the near stringer —
+// stops 29 px short of the moving plane (3 px over tolerance; the same
+// tread/stringer gap #22 documented), so only ONE stringer rule-matches.
+// No tread-row element cleanly attaches with shiftAxial on this art: the
+// diagonal candidates near the moving plane are sub-tolerance hatch and
+// arrowhead fragments (the proposal's noise gate keeps them axis-aligned)
+// and the larger diagonal pieces are stringer duplicates, not riders.
+// dim4 REMAINS ambiguous: the full-height sheet-frame lines path7315/
+// path7320 overlap both end planes and the all-or-nothing rule (#11) drops
+// every rule-matched binding — conservatism is NOT weakened. The rendered
+// proof therefore runs the one rule-derived binding through the documented
+// hand-accept path (the same move POST /bind supports): the engine must
+// make the staircase follow dim4 = 3000 exactly.
+test('#23 real art: 003 dim4 = 3000 — the stringer follows (rendered proof via the hand-accept path)', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
+  const tmp = mkdtempSync(join(tmpdir(), 'ladder-axial23-'));
+  const r = await scaffold(join(repo, 'LSB-2607-003-RHC-R00.pdf'), { llm: false, id: 'geo-003-axial23', templatesDir: tmp });
+  assert.equal(r.props.find((p) => p.id === 'dim4')?.value, '2500');
+  const dir = join(tmp, 'geo-003-axial23');
+  const clean = readFileSync(join(dir, 'base.clean.svg'), 'utf8');
+  const rows = parseQueryAll(execFileSync('inkscape', ['--query-all', join(dir, 'base.clean.svg')], { encoding: 'utf8', maxBuffer: 1 << 28 }));
+
+  // The dim's own geometry (the same rec the proposal stage used).
+  const g = proposeGeometry(rows, r.props, clean);
+  const rec4 = g.recs.find((x) => x.p.id === 'dim4');
+  assert.ok(rec4, 'dim4 line recognised');
+  const extent = rec4.extent;
+  const s = extent / 2500;                       // 0.10348 px/mm, self-calibrated
+  const d0 = rec4.line.y, d1 = d0 + rec4.line.h; // 218.9 .. 477.6
+  const datumC = rec4.datum.y;                   // 218.9 (top / platform side)
+  const tol = SPAN_TOL * extent;                 // ±25.9
+
+  // Re-derive the span rule for each stringer on the d-level geometry
+  // (anchor endpoints through the matrix — the #23 contract), independent
+  // of the proposal loop:
+  const tagOf = (id) => clean.match(new RegExp(`<[a-zA-Z][^>]*?\\bid="${id}"[^>]*>`))[0];
+  const projOf = (id) => {
+    const tag = tagOf(id);
+    const m = parseMatrix(tag.match(/transform="([^"]*)"/)[1]);
+    const ax = localAxis(m, tag.match(/\bd="([^"]*)"/)[1]);
+    assert.ok(ax && ax.u, `${id}: data-diagonal axis recovered`);
+    const ps = ax.pts.map((p) => m.b * p[0] + m.d * p[1] + m.f);
+    return { ax, m, r0: Math.min(...ps), r1: Math.max(...ps), qLo: ax.pLo[0] * m.b + ax.pLo[1] * m.d + m.f, qHi: ax.pHi[0] * m.b + ax.pHi[1] * m.d + m.f };
+  };
+  // path1492: the far stringer. Axis (−0.519,−0.855) in user space (the
+  // d=−1.3333 flip turns the local uphill (+y) into page-up), a dominant
+  // 231-local-unit run — an axial member by both gates.
+  const far = projOf('path1492');
+  assert.ok(Math.abs(far.ax.u[0] + 0.519) < 1e-3 && Math.abs(far.ax.u[1] + 0.855) < 1e-3, `path1492 user axis ${far.ax.u}`);
+  assert.ok(Math.abs(far.r1 - far.r0 - extent) <= tol && Math.abs(far.r0 - d0) <= tol && Math.abs(far.r1 - d1) <= tol,
+    `path1492 spans the dim (proj ${far.r0.toFixed(1)}..${far.r1.toFixed(1)} vs planes ${d0.toFixed(1)}..${d1.toFixed(1)}, tol ${tol.toFixed(1)})`);
+  // the datum side is the projection-max end (user y 216.9, the platform
+  // end) -> about "max" pins it; the ground end follows the moving plane.
+  const about = Math.abs(far.qLo - datumC) <= Math.abs(far.qHi - datumC) ? 'min' : 'max';
+  assert.equal(about, 'max');
+  // path1491: the near stringer — the documented 3px miss, locked.
+  const near = projOf('path1491');
+  assert.ok(!(Math.abs(near.r1 - near.r0 - extent) <= tol && Math.abs(near.r0 - d0) <= tol && Math.abs(near.r1 - d1) <= tol),
+    `path1491 stops ${(d1 - near.r1).toFixed(1)} px short of the moving plane — over tolerance, correctly unbound`);
+
+  // The finding, locked: all-or-nothing still forfeits dim4 (the frame
+  // lines), so the scaffolded template carries no part binding for it.
+  assert.deepEqual(r.parts.find((d) => d.param === 'dim4'), { param: 'dim4', bound: 0, skipped: 974, ambiguous: true });
+  const tpl = JSON.parse(readFileSync(join(dir, 'template.json'), 'utf8'));
+  const d4Geom = tpl.bindings.filter((b) => b.param === 'dim4' && b.geom);
+  assert.equal(d4Geom.length, 3, 'dim4 carries exactly its annotation cluster (line, moving arrowhead, text)');
+  assert.ok(d4Geom.every((b) => ['stretchY', 'shiftY'].includes(b.geom.op)), 'no part op for dim4 — the dim was forfeited');
+
+  // The rendered proof: accept the one rule-derived binding by hand (the
+  // documented POST /bind move — the proposal report above is untouched)
+  // and render dim4 = 2500 -> 3000.
+  tpl.bindings.push({ ids: ['path1492'], param: 'dim4', geom: { op: 'stretchAxial', about: 'max', anchor: 2500 } });
+  writeFileSync(join(dir, 'template.json'), JSON.stringify(tpl, null, 2) + '\n');
+  const out = renderById(tmp, 'geo-003-axial23', { dim4: '3000' });
+  assert.ifError(out.error);
+  assert.ok(out.report.filter((b) => !b.ok).length === 0, JSON.stringify(out.report.filter((b) => !b.ok)));
+
+  // Stringer outcome, measured on the RENDERED geometry (matrix + rewritten
+  // d, projected onto the measured axis):
+  const rendered = (svg) => {
+    const tag = svg.match(/<path\b[^>]*\bid="path1492"[^>]*>/)[0];
+    const m = parseMatrix(tag.match(/transform="([^"]*)"/)[1]);
+    const ax = localAxis(m, tag.match(/\bd="([^"]*)"/)[1]);
+    const ps = ax.pts.map((p) => m.b * p[0] + m.d * p[1] + m.f);
+    return { ax, m, len: Math.max(...ps) - Math.min(...ps), pin: [m.a * ax.pHi[0] + m.c * ax.pHi[1] + m.e, m.b * ax.pHi[0] + m.d * ax.pHi[1] + m.f] };
+  };
+  const before = rendered(clean);
+  const after = rendered(out.svg);
+  // grew by (ratio-1) x its own projection along the SAME axis: the spec
+  // number is 500*s px, admitted to ±SPAN_TOL of it (the span rule's own
+  // tolerance — the stringer's projection differs from the dim extent by
+  // less than that at the anchor, and the edit scales the difference).
+  const growth = after.len - before.len;
+  const expected = 500 * s;
+  assert.ok(Math.abs(growth - expected) <= SPAN_TOL * expected,
+    `stringer projected length grew ${growth.toFixed(2)} px, expected ${expected.toFixed(2)} ±${(SPAN_TOL * expected).toFixed(2)}`);
+  // direction preserved: u is the map's eigen-direction — angle unchanged.
+  const ang = (u) => Math.atan2(u[1], u[0]);
+  assert.ok(Math.abs(ang(after.ax.u) - ang(before.ax.u)) < 1e-3, 'user axis angle preserved');
+  // the pinned datum-side end did not move, and sits at the datum plane
+  // within the span tolerance the rule admitted it with.
+  assert.ok(Math.abs(after.pin[1] - before.pin[1]) < 1e-3 && Math.abs(after.pin[0] - before.pin[0]) < 1e-3,
+    `pinned end ${before.pin.map((n) => n.toFixed(2))} -> ${after.pin.map((n) => n.toFixed(2))}`);
+  assert.ok(Math.abs(after.pin[1] - datumC) <= tol, 'the pinned end sits on the datum plane');
+
+  // the annotation reads 3000.
+  const annId = r.props.find((p) => p.id === 'dim4').geom.glyphs[0].id;
+  const ann = out.svg.match(new RegExp(`<text\\b[^>]*?\\bid="${annId}"[^>]*>[\\s\\S]*?<\\/text>`))[0];
+  assert.ok(ann.includes('>3000<'), 'the dim4 annotation reads 3000');
+
+  // no unbound element moved (the established transform-diff pattern):
+  // every changed transform belongs to a binding id.
+  const tf = (svg) => { const mm = {}; for (const x of svg.matchAll(/<[a-zA-Z][\w:-]*[^>]*?\bid="([^"]+)"[^>]*?\btransform="([^"]*)"/g)) mm[x[1]] = x[2]; return mm; };
+  const tClean = tf(clean), tOut = tf(out.svg);
+  const boundIds = new Set(tpl.bindings.flatMap((b) => b.ids || []));
+  for (const id of Object.keys(tClean)) {
+    if (tClean[id] !== tOut[id]) assert.ok(boundIds.has(id), `${id} moved but is not bound`);
+  }
 });
 
 // ---------- real art: the footprint dimension of the trolley template ----------
@@ -699,6 +1093,9 @@ test('editor inline engine applies identical geometry ops (port parity)', () => 
     + '<path id="p3" transform="matrix(1,0,0,2,5,6)" d="M 0,0 V 4"/>'
     + '<path id="p4" transform="matrix(6,8,0,5,10,20)" d="M 0,0 H 40"/>'
     + '<path id="p5" transform="matrix(6,8,0,5,10,20)" d="M 0,0 H -40"/>'
+    + '<path id="d1" transform="matrix(1.3333333,0,0,-1.3333333,50,60)" d="M 0,0 L -120.043,197.853"/>'
+    + '<path id="d2" transform="matrix(1,0,0,1,10,20)" d="M 0,0 V 40 C 10,50 -10,60 0,70"/>'
+    + '<path id="d3" transform="matrix(1,0,0,1,0,0)" d="M 0,0 L 30,40 A 5,5 0 0 1 50,60"/>'
     + '<path id="zero" transform="matrix(0,0,0,1,5,6)" d="M 0,0 H 5"/>'
     + '<path id="t"/></svg>';
   const bindings = [
@@ -719,6 +1116,13 @@ test('editor inline engine applies identical geometry ops (port parity)', () => 
     { ids: ['t'], param: 'd', geom: { op: 'stretchAxial', about: 'max', anchor: 100 } },
     { ids: ['zero'], param: 'd', geom: { op: 'shiftAxial', anchor: 100, pxPerUnit: 0.5 } },
     { ids: ['p4'], param: 'd', geom: { op: 'stretchAxial', about: 'middle', anchor: 200 } },
+    // #23 d-level ops: axis-aligned matrix with diagonal/curved/arc path data
+    // (both about values, the translation fix, the arc resilience row)
+    { ids: ['d1'], param: 'd', geom: { op: 'stretchAxial', about: 'max', anchor: 200 } },
+    { ids: ['d1'], param: 'd', geom: { op: 'stretchAxial', anchor: 200 } },
+    { ids: ['d1'], param: 'd', geom: { op: 'shiftAxial', anchor: 100, pxPerUnit: 0.4 } },
+    { ids: ['d2'], param: 'd', geom: { op: 'stretchAxial', about: 'max', anchor: 100 } },
+    { ids: ['d3'], param: 'd', geom: { op: 'stretchAxial', anchor: 100 } },
   ];
   for (const params of [{ d: '150' }, { d: '3,500' }, { d: 'abc' }]) {
     const cli = applyGeometry(svg, bindings, params);

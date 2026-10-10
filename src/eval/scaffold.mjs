@@ -11,7 +11,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
 import { resolve, join, basename } from 'node:path';
 import { textRuns, findRun, orderedLists } from '../templates/render.mjs';
-import { localExtent } from '../templates/geometry.mjs';
+import { localExtent, localAxis } from '../templates/geometry.mjs';
 import { parseQueryAll, coincidentOutlineIds, hideIds, svgIds, mergeGlyphTexts } from '../templates/authoring.mjs';
 import { buildEditor } from './makeEditor.mjs';
 import { convertPdf } from '../convert/convert.mjs';
@@ -300,13 +300,38 @@ export const SPAN_TOL = 0.10;
 // projection — today's behaviour unchanged); anything steeper classifies
 // AXIAL and is measured by its bbox projection onto the measured axis.
 const AXIS_BAND = (12.5 * Math.PI) / 180;
-const orientOf = (m) => {
-  if (!m) return 'X';                    // no transform: identity, the axis-aligned default
-  const th = ((Math.atan2(+m[2], +m[1]) % Math.PI) + Math.PI) % Math.PI;
+const bandOf = (th) => {
+  th = ((th % Math.PI) + Math.PI) % Math.PI;
   if (th <= AXIS_BAND || th >= Math.PI - AXIS_BAND) return 'X';
   if (Math.abs(th - Math.PI / 2) <= AXIS_BAND) return 'Y';
   return 'AXIAL';
 };
+
+/** Candidate orientation (#22 + #23). A ROTATED matrix classifies by its
+ *  matrix angle, unchanged (#22). An axis-aligned matrix (b=0 — every path
+ *  on converted art, per the #20 finding) classifies by the element's
+ *  DRAWN axis: the dominant straight run of its path data through the
+ *  matrix, u_user = M·u/|M·u| (ticket #23) — a diagonal d is AXIAL even
+ *  though the matrix angle is 0. Two gates keep this an axial MEMBER test,
+ *  not an edge test: the dominant run must be substantially dominant
+ *  (≥2× the next run — a right-triangle bolt outline's hypotenuse must not
+ *  make a blob "axial" and drag it off the moving plane laterally), and no
+ *  usable straight segment falls back to the matrix-angle answer (no
+ *  matrix: the axis-aligned default 'X'). Returns { family, ax?, data? } —
+ *  `ax` is the localAxis result for data-diagonal candidates (the axial
+ *  rules need its endpoints, projection extent, and user axis). */
+const DOMINANCE = 2;                    // locked: an axial member's longest run vs the next
+function classifyCandidate(m, tag) {
+  if (m && +m[2] !== 0) return { family: bandOf(Math.atan2(+m[2], +m[1])) };
+  const dm = tag && tag.match(/\bd="([^"]*)"/);
+  if (!dm) return { family: 'X' };
+  const ax = localAxis(m
+    ? { a: +m[1], b: +m[2], c: +m[3], d: +m[4], e: +m[5], f: +m[6] }
+    : null, dm[1]);
+  if (!ax || ax.bestLen < DOMINANCE * ax.secondLen) return { family: 'X' };
+  const family = bandOf(Math.atan2(ax.u[1], ax.u[0]));
+  return family === 'AXIAL' ? { family, ax, data: true } : { family };
+}
 
 /** Part-proposal stage (spec #8, tickets #10/#11/#22): for a dimension whose
  *  annotation bound, classify the elements inside the locality box.
@@ -328,6 +353,15 @@ const orientOf = (m) => {
  *  candidate, and an AXIAL candidate without a usable path extent (the
  *  engine's pinned end needs the local x extent) counts as skipped,
  *  reported — neither makes the dim ambiguous.
+ *
+ *  Data-diagonal candidates (#23): on converted art the rotation lives in
+ *  path DATA (axis-aligned scale/flip matrices everywhere), so an
+ *  axis-aligned matrix classifies by the dominant straight run of d through
+ *  the matrix (classifyCandidate shares the engine's localAxis recovery).
+ *  Their projected-bbox checks use the d-level geometry — every anchor
+ *  endpoint through the matrix — and their about end is the datum-side
+ *  projection end. An AXIAL path whose d carries arcs counts as skipped,
+ *  reported (the d-level op cannot deform arcs exactly) — never ambiguous.
  *
  *  All-or-nothing (#11): an element that overlaps BOTH end planes without
  *  matching a rule makes the WHOLE dimension's part proposal ambiguous —
@@ -356,44 +390,81 @@ function proposeParts(usable, claimed, { p, line, extent, vertical, datum, movin
     if (claimed.has(r.id)) continue;
     if (!inLocality(r, line, extent, vertical)) continue;  // locality guard
     const m = matrixOf(r.id);
-    // r0/r1 are the element's bbox ends on the measured axis — for an AXIAL
-    // candidate this is exactly its bbox projected onto the measured axis.
-    const r0 = r[axis], r1 = r0 + len(r, axis);
-    if (orientOf(m) === 'AXIAL') {
-      const tag = tagOf(r.id);
-      // Rotated annotation text is never a part candidate (spec #20), and an
-      // axial op needs a path-like local x extent (the engine's pinned end
-      // for about "max"; the about derivation below). Either way: skipped
-      // and reported — never a part, never ambiguous.
-      const ext = tag && !/^<(?:text|tspan)\b/i.test(tag) ? localExtent(tag, 'x') : null;
-      if (!ext) { skipped++; continue; }
+    let cls = classifyCandidate(m, tagOf(r.id));
+    if (cls.family === 'AXIAL' && cls.data) {
+      // An axial member must outsize the rule's own noise band: shorter
+      // than the span tolerance it is a fragment (arrowhead half, tick,
+      // hatch mark), not a member — the axial op would ride the plane but
+      // drift it laterally, so it keeps the axis-aligned behaviour it had
+      // before #23. The user-space axis length |M·l|·bestLen measures the
+      // member itself, self-calibrated like everything else here.
+      const mo = m
+        ? { a: +m[1], b: +m[2], c: +m[3], d: +m[4], e: +m[5], f: +m[6] }
+        : { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+      const scale = Math.hypot(mo.a * cls.ax.l[0] + mo.c * cls.ax.l[1], mo.b * cls.ax.l[0] + mo.d * cls.ax.l[1]);
+      if (scale * cls.ax.bestLen < tol) cls = { family: 'X' };
+    }
+    if (cls.family === 'AXIAL') {
+      // r0/r1: the candidate's projected extent on the measured axis. A
+      // data-diagonal candidate (#23) measures it from the d-level geometry
+      // — every anchor endpoint through the matrix — not the row bbox or
+      // the matrix angle; a matrix-rotated candidate (#22) uses its bbox
+      // projection, as before.
+      let r0, r1, qLo = 0, qHi = 0;
+      if (cls.data) {
+        const mo = m
+          ? { a: +m[1], b: +m[2], c: +m[3], d: +m[4], e: +m[5], f: +m[6] }
+          : { a: 1, b: 0, c: 0, d: 1, e: 0, f: 0 };
+        const proj = (p) => (vertical ? mo.b * p[0] + mo.d * p[1] + mo.f : mo.a * p[0] + mo.c * p[1] + mo.e);
+        const ps = cls.ax.pts.map(proj);
+        r0 = Math.min(...ps);
+        r1 = Math.max(...ps);
+        qLo = proj(cls.ax.pLo);
+        qHi = proj(cls.ax.pHi);
+        // The engine's d-level op cannot deform arcs exactly: skipped,
+        // reported — never a part, never ambiguous (the same rule class as
+        // #22's no-extent axial candidates).
+        if (cls.ax.arc) { skipped++; continue; }
+      } else {
+        const tag = tagOf(r.id);
+        // Rotated annotation text is never a part candidate (spec #20), and
+        // an axial op needs a path-like local x extent (the #21 engine's
+        // pinned end for about "max"). Either way: skipped and reported.
+        const ext = tag && !/^<(?:text|tspan)\b/i.test(tag) ? localExtent(tag, 'x') : null;
+        if (!ext) { skipped++; continue; }
+        // r0/r1 are the element's bbox ends on the measured axis — for a
+        // rotated candidate this is exactly its bbox projection.
+        r0 = r[axis];
+        r1 = r0 + len(r, axis);
+      }
       if (Math.abs(r1 - r0 - extent) <= tol && Math.abs(r0 - d0) <= tol && Math.abs(r1 - d1) <= tol) {
-        // Axial span rule: the projected bbox spans the dim extent with both
-        // ends on the end planes -> stretch along the element's own axis
-        // (angle preserved); the pinned end is the datum side of the local
-        // extent (deriveAbout; the engine's "min" pins the local-origin end).
-        const about = deriveAbout(matrixOf, r, { vertical, datumC });
+        // Axial span rule: the projected extent spans the dim extent with
+        // both ends on the end planes -> stretch along the element's own
+        // axis (angle preserved); the pinned end is the datum side. A data
+        // candidate pins the datum-side projection end of its path (the #23
+        // engine: about "min" = projection-lo end); a rotated candidate
+        // keeps #22's deriveAbout on the matrix translation.
+        const about = cls.data
+          ? (Math.abs(qLo - datumC) <= Math.abs(qHi - datumC) ? 'min' : 'max')
+          : deriveAbout(matrixOf, r, { vertical, datumC });
         bindings.push({ ids: [r.id], param: p.id, geom: { op: 'stretchAxial', about, anchor: v } });
         claimed.add(r.id);
         bound++;
         continue;
       }
       if (moving && Math.abs((dir > 0 ? r0 : r1) - movingC) <= tol && (dir > 0 ? r1 : r0) * dir >= datumC * dir) {
-        // Axial attach rule: the whole projected bbox lies on the moving side
+        // Axial attach rule: the whole projection lies on the moving side
         // with its near point on the moving-end plane -> the element rides
-        // the plane rigidly along its own axis. Rate derivation: the plane
-        // travels s px per mm along the measured axis; translating the
-        // element d user units along its own axis (length |(a,b)|) shifts
-        // its measured-axis projection by d·sin(α), where α is the axis
-        // elevation from the measured plane and sin(α) = the axis's
-        // component along the measured axis over its length — |a|/|(a,b)|
-        // for a horizontal dim, |b|/|(a,b)| for a vertical one (the fraction
-        // of axial travel that lands on the measured axis). Keeping the near
-        // projected point on the plane needs d·sin(α) = s·Δv per Δv mm, so
-        // pxPerUnit = s / sin(α). The AXIAL band guarantees
-        // sin(α) ≥ sin(12.5°) ≈ 0.216, so the rate is always finite.
-        const sinA = Math.abs(vertical ? +m[2] : +m[1]) / Math.hypot(+m[1], +m[2]);
-        bindings.push({ ids: [r.id], param: p.id, geom: { op: 'shiftAxial', anchor: v, pxPerUnit: s / sinA } });
+        // the plane rigidly along its own axis. Rate derivation (#22): the
+        // plane travels s px/mm along the measured axis; translating the
+        // element along its axis lands only the axis's component comp on
+        // the measured axis, so pxPerUnit = s/comp — signed for a data
+        // candidate (#23) so the translation's projection rides the plane
+        // in the moving direction (the dumb engine multiplies the sign in).
+        const pxPerUnit = cls.data
+          ? (dir * s) / (vertical ? cls.ax.u[1] : cls.ax.u[0])
+          : s / (Math.abs(vertical ? +m[2] : +m[1]) / Math.hypot(+m[1], +m[2]));
+        bindings.push({ ids: [r.id], param: p.id, geom: { op: 'shiftAxial', anchor: v, pxPerUnit } });
         claimed.add(r.id);
         bound++;
         continue;
@@ -402,6 +473,10 @@ function proposeParts(usable, claimed, { p, line, extent, vertical, datum, movin
       if (r0 <= d0 + tol && r1 >= d1 - tol) ambiguous = true;   // overlaps both end planes
       continue;
     }
+    // r0/r1 are the element's bbox ends on the measured axis — for an
+    // axis-aligned element the bbox side along the measured axis IS its
+    // projection.
+    const r0 = r[axis], r1 = r0 + len(r, axis);
     if (Math.abs(r1 - r0 - extent) <= tol && Math.abs(r0 - d0) <= tol && Math.abs(r1 - d1) <= tol) {
       // Span rule: the pinned end is the datum side of the element's local
       // extent (deriveAbout; the engine's "min" pins the local-origin end).

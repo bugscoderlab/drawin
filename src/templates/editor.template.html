@@ -116,6 +116,66 @@
       else if(cmd==='A'||cmd==='a'){const p=[read(),read(),read(),read(),read(),read(),read()];up(p[5],p[6]);}
       else return null; }
     return started?{lo,hi}:null; };
+  // Local axis from path data (ticket #23): the unit vector of the dominant
+  // straight run, its projection extent, and the axis through the matrix in
+  // user space — axis1(matrix, d), the engine's localAxis port.
+  const axis1=(matrix,d)=>{const t=String(d||'').match(/[a-zA-Z]|-?(?:\d*\.)?\d+(?:[eE][-+]?\d+)?/g);if(!t)return null;
+    let i=0,cmd='',x=0,y=0,ox=0,oy=0,arc=false;const pts=[],runs=[];let run=null;
+    const read=()=>{const n=parseFloat(t[i++]);return Number.isNaN(n)?0:n;};
+    const flush=()=>{if(run){runs.push(run);run=null;}};
+    const point=(nx,ny)=>{pts.push([nx,ny]);x=nx;y=ny;};
+    const seg=(nx,ny)=>{const vx=nx-x,vy=ny-y,len=Math.hypot(vx,vy);
+      if(len>0){ if(run){const rx=run.x1-run.x0,ry=run.y1-run.y0,rl=Math.hypot(rx,ry);
+          if(Math.abs(rx*vy-ry*vx)<=1e-9*rl*len&&rx*vx+ry*vy>0){run.x1=nx;run.y1=ny;}
+          else{flush();run={x0:x,y0:y,x1:nx,y1:ny};} }
+        else run={x0:x,y0:y,x1:nx,y1:ny}; }
+      point(nx,ny); };
+    const curve=(n)=>{flush();const rel=cmd>='a'&&cmd<='z',px=rel?x:0,py=rel?y:0;const p=[];for(let j=0;j<n;j++)p.push(read());point(px+p[n-2],py+p[n-1]);};
+    while(i<t.length){ if(/[a-zA-Z]/.test(t[i])){cmd=t[i++];if(cmd==='Z'||cmd==='z'){seg(ox,oy);continue;}}
+      const rel=cmd>='a'&&cmd<='z',px=rel?x:0,py=rel?y:0;
+      if(cmd==='M'||cmd==='m'||cmd==='L'||cmd==='l'){ if(cmd==='M'||cmd==='m'){flush();} let relP=cmd==='m'||cmd==='l';
+          do{ const qx=relP?x:0,qy=relP?y:0; seg(qx+read(),qy+read());
+            if(cmd==='M'||cmd==='m'){ox=x;oy=y;cmd=cmd==='M'?'L':'l';relP=cmd==='l';}
+          }while(i<t.length&&!/[a-zA-Z]/.test(t[i])); }
+      else if(cmd==='H'||cmd==='h'){seg(px+read(),y);}
+      else if(cmd==='V'||cmd==='v'){seg(x,py+read());}
+      else if(cmd==='C'||cmd==='c'){curve(6);}
+      else if(cmd==='S'||cmd==='s'||cmd==='Q'||cmd==='q'){curve(4);}
+      else if(cmd==='T'||cmd==='t'){curve(2);}
+      else if(cmd==='A'||cmd==='a'){arc=true;curve(7);}
+      else return null; }
+    flush();
+    if(!runs.length)return null;
+    let best=null,bestLen=-1,secondLen=0;
+    for(const r of runs){const l=Math.hypot(r.x1-r.x0,r.y1-r.y0);
+      if(l>bestLen){secondLen=bestLen>0?bestLen:0;best=r;bestLen=l;}else if(l>secondLen)secondLen=l;}
+    if(bestLen<=0)return null;
+    const l=[(best.x1-best.x0)/bestLen,(best.y1-best.y0)/bestLen];
+    let lo=Infinity,hi=-Infinity,pLo=null,pHi=null;
+    for(const p of pts){const s=p[0]*l[0]+p[1]*l[1];if(s<lo){lo=s;pLo=p;}if(s>hi){hi=s;pHi=p;}}
+    let u=l;
+    if(matrix){const ux=matrix.a*l[0]+matrix.c*l[1],uy=matrix.b*l[0]+matrix.d*l[1];
+      const ul=Math.hypot(ux,uy);u=ul>0?[ux/ul,uy/ul]:null;}
+    return {l,u,lo,hi,pLo,pHi,pts,arc,bestLen,secondLen}; };
+  // The d-level linear map p' = p + k·(p·l)·l on every coordinate pair
+  // (exact for curves by linearity; arcs refused) — mapD(d,k,l) -> d'|null.
+  const mapD=(d,k,l)=>{const t=String(d||'').match(/[a-zA-Z]|-?(?:\d*\.)?\d+(?:[eE][-+]?\d+)?/g);if(!t)return null;
+    const [ux,uy]=l;
+    const mp=(x,y)=>{const s=k*(x*ux+y*uy);return [x+s*ux,y+s*uy];};
+    const out=[];let i=0,cmd='',x=0,y=0,ox=0,oy=0;
+    const read=()=>{const n=parseFloat(t[i++]);return Number.isNaN(n)?0:n;};
+    while(i<t.length){ if(/[a-zA-Z]/.test(t[i])){cmd=t[i++];if(cmd==='Z'||cmd==='z'){out.push('Z');x=ox;y=oy;continue;}}
+      const rel=cmd>='a'&&cmd<='z',px=rel?x:0,py=rel?y:0;
+      const emit=(c,pairs)=>out.push(c+' '+pairs.map(p=>fmtN(p[0])+','+fmtN(p[1])).join(' '));
+      if(cmd==='M'||cmd==='m'||cmd==='L'||cmd==='l'||cmd==='T'||cmd==='t'){const nx=px+read(),ny=py+read();emit(cmd,[mp(nx,ny)]);x=nx;y=ny;
+        if(cmd==='M'){ox=x;oy=y;cmd='L';}else if(cmd==='m'){ox=x;oy=y;cmd='l';}}
+      else if(cmd==='H'||cmd==='h'){const nx=px+read(),ny=y;emit('L',[mp(nx,ny)]);x=nx;y=ny;}
+      else if(cmd==='V'||cmd==='v'){const nx=x,ny=py+read();emit('L',[mp(nx,ny)]);x=nx;y=ny;}
+      else if(cmd==='C'||cmd==='c'){const pairs=[];for(let j=0;j<3;j++){const nx=px+read(),ny=py+read();pairs.push(mp(nx,ny));if(j===2){x=nx;y=ny;}}emit('C',pairs);}
+      else if(cmd==='S'||cmd==='s'||cmd==='Q'||cmd==='q'){const pairs=[];for(let j=0;j<2;j++){const nx=px+read(),ny=py+read();pairs.push(mp(nx,ny));if(j===1){x=nx;y=ny;}}emit(cmd.toUpperCase(),pairs);}
+      else if(cmd==='A'||cmd==='a'){return null;}
+      else return null; }
+    return out.length?out.join(' '):null; };
   function applyGeometry(svg,bindings,params){ const report=[]; let out=svg;
     for(const b of bindings){ const v=parseFloat(String(params[b.param]??'').replace(/,/g,'')); const a0=parseFloat(String(b.geom?.anchor??'').replace(/,/g,''));
       const op=b.geom?.op; const ab=b.geom?.about; const numOk=(n)=>Number.isFinite(n)&&n>0;
@@ -135,17 +195,44 @@
           const p0=Math.abs(ext.lo)>Math.abs(ext.hi)?ext.lo:ext.hi;
           nxt=op==='stretchX'?{...base,a:base.a*ratio,e:base.e+base.a*p0*(1-ratio)}:{...base,d:base.d*ratio,f:base.f+base.d*p0*(1-ratio)};
         } else if(op==='stretchAxial'){
-          // scale the whole (a,b) column; the pinned local end stays fixed in
-          // user space (about "min" -> p0=0, the local origin; "max" -> far end)
-          let p0=0;
-          if(ab==='max'){const ext=extent1D(tag,'x');if(!ext){ok=false;continue;}p0=Math.abs(ext.lo)>Math.abs(ext.hi)?ext.lo:ext.hi;}
-          nxt={...base,a:base.a*ratio,b:base.b*ratio,e:base.e+base.a*p0*(1-ratio),f:base.f+base.b*p0*(1-ratio)};
+          // rotated matrix (#21): scale the whole (a,b) column about the
+          // pinned LOCAL end; axis-aligned matrix (#23): the element's axis
+          // lives in its path data — apply the linear map at the d level,
+          // unless the data axis is local x (that map equals the column op,
+          // so keep the matrix rewrite — byte-identical to stretchX).
+          const colOp=(p0)=>({...base,a:base.a*ratio,b:base.b*ratio,e:base.e+base.a*p0*(1-ratio),f:base.f+base.b*p0*(1-ratio)});
+          if(base.b!==0){
+            let p0=0;
+            if(ab==='max'){const ext=extent1D(tag,'x');if(!ext){ok=false;continue;}p0=Math.abs(ext.lo)>Math.abs(ext.hi)?ext.lo:ext.hi;}
+            nxt=colOp(p0);
+          } else {
+            const dm=tag.match(/\bd="([^"]*)"/);
+            const ax=dm&&axis1(base,dm[1]);
+            if(!ax){ok=false;continue;}
+            if(Math.abs(ax.l[1])<=1e-9){
+              let p0=0;
+              if(ab==='max'){const ext=extent1D(tag,'x');if(!ext){ok=false;continue;}p0=Math.abs(ext.lo)>Math.abs(ext.hi)?ext.lo:ext.hi;}
+              nxt=colOp(p0);
+            } else {
+              if(ax.arc){ok=false;continue;}
+              const nd=mapD(dm[1],ratio-1,ax.l);
+              if(!nd){ok=false;continue;}
+              const p0=ab==='max'?ax.hi:ax.lo;
+              const fix=(1-ratio)*p0;
+              tag=tag.replace(/\bd="[^"]*"/,`d="${nd}"`);
+              nxt={...base,e:base.e+fix*(base.a*ax.l[0]+base.c*ax.l[1]),f:base.f+fix*(base.b*ax.l[0]+base.d*ax.l[1])};
+            }
+          }
         } else if(op==='shiftAxial'){
-          // translate along the local x-axis unit (a,b)/|(a,b)|
-          const len=Math.hypot(base.a,base.b);
-          if(!len){ok=false;continue;}
+          // translate along the element's own axis in user space: the (a,b)
+          // column for a rotated matrix (#21), the data axis through the
+          // matrix for an axis-aligned one (#23)
+          let ux,uy;
+          if(base.b!==0){const len=Math.hypot(base.a,base.b);if(!len){ok=false;continue;}ux=base.a/len;uy=base.b/len;}
+          else{const dm=tag.match(/\bd="([^"]*)"/);const ax=dm&&axis1(base,dm[1]);
+            if(!ax||!ax.u){ok=false;continue;}ux=ax.u[0];uy=ax.u[1];}
           const d=(v-a0)*ppu;
-          nxt={...base,e:base.e+base.a/len*d,f:base.f+base.b/len*d};
+          nxt={...base,e:base.e+ux*d,f:base.f+uy*d};
         } else {
           nxt=op==='stretchX'?{...base,a:base.a*ratio}:op==='stretchY'?{...base,d:base.d*ratio}
             :op==='shiftX'?{...base,e:base.e+(v-a0)*ppu}:{...base,f:base.f+(v-a0)*ppu}; }
