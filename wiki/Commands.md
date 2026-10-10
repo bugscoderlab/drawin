@@ -53,8 +53,8 @@ value bindings, and geometry proposals are recomputed from the current art.
 ## ladder serve
 
 The upload page shows an **LLM** pill in the header — green *LLM connected*
-when the server resolves a key (`.env` baked into the image on the VPS, same
-mechanism as `UPLOAD_TOKEN`), grey *rules only* when keyless. After an
+when the server resolves a key (`.env` interpolated into the container by
+compose, same mechanism as `UPLOAD_TOKEN`; the image never carries it), grey *rules only* when keyless. After an
 upload, the result panel reports the part-binding provenance: how many dims
 the model was consulted on, and how many bindings it contributed vs. how many
 ids the engine rejected.

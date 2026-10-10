@@ -51,5 +51,23 @@ Scaffolding runs Inkscape on uploaded PDFs, so a public endpoint should require 
 
 `templates/` and `preview/` are named volumes — scaffolded templates and
 generated editors survive redeploys. The repo copy seeds them on first boot.
-No database, no secrets on the box (scaffolding uses Inkscape only; the LLM
-key is never needed on the server).
+No database. Scaffolding uses Inkscape only unless you opt in (below); the
+LLM key is never needed on the server.
+
+## Optional: LLM-assisted scaffold on the server
+
+By default the server scaffolds rules-only (deterministic). To let the
+server-side scaffold run the LLM passes (vision dims, formulas, part-binding
+proposals), put the key in the gitignored `.env` next to `docker-compose.yml`:
+
+```
+LADDER_LLM_PROVIDER=gemini
+GEMINI_API_KEY=...
+LADDER_LLM_MODEL=gemini-3.5-flash-lite   # optional
+```
+
+`docker compose` interpolates the `LADDER_LLM_*`/provider key vars into the
+container's environment (same mechanism as `UPLOAD_TOKEN`); the image itself
+never carries secrets (`.dockerignore` excludes `.env`). The upload page
+shows an **LLM connected** pill when a key resolves. Run scaffolds where the
+key lives (locally or CI) if you prefer the server to stay keyless.

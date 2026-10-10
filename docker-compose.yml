@@ -9,6 +9,17 @@ services:
       # default stays 127.0.0.1 — see issue #2.)
       - HOST=0.0.0.0
       - UPLOAD_TOKEN=${UPLOAD_TOKEN:-}   # put UPLOAD_TOKEN=<token> in the gitignored .env to require it
+      # LLM passes (vision dims, formulas, part proposals) read the key from
+      # the environment; same gitignored .env, same interpolation as the token.
+      # The image itself never carries secrets (.dockerignore excludes .env).
+      - LADDER_LLM_PROVIDER=${LADDER_LLM_PROVIDER:-}
+      - LADDER_LLM_MODEL=${LADDER_LLM_MODEL:-}
+      - LADDER_LLM_BASE_URL=${LADDER_LLM_BASE_URL:-}
+      - LADDER_LLM_API_KEY=${LADDER_LLM_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GOOGLE_GENERATIVE_AI_API_KEY=${GOOGLE_GENERATIVE_AI_API_KEY:-}
     ports:
       - "8123:8123"
     volumes:
