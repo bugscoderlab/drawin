@@ -73,14 +73,16 @@ test('mergeGlyphTexts leaves rotated text and lone glyphs alone', () => {
 
 // ---------- real art (Inkscape-gated): the issue #19 repro ----------
 
-test('scaffold 004 recovers title-block fields from a glyph-split conversion', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
+test('scaffold 003 recovers title-block fields from a glyph-split conversion', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
   const { scaffold } = await import('../src/eval/scaffold.mjs');
   const tmp = mkdtempSync(join(tmpdir(), 'ladder-merge-'));
-  const r = await scaffold(join(repo, 'LSB-2607-004-FHL-R00.pdf'), { llm: false, id: 'merge-004', templatesDir: tmp });
+  // 003 carries its title-block values in the text layer on every converter
+  // build (004 outlines its values — see issue #19's limitation note)
+  const r = await scaffold(join(repo, 'LSB-2607-003-RHC-R00.pdf'), { llm: false, id: 'merge-003', templatesDir: tmp });
   const ids = r.props.map((p) => p.id);
   for (const id of ['drawingNo', 'customer', 'workingLoad', 'productName']) {
     assert.ok(ids.includes(id), `${id} proposed (got: ${ids.join(',')})`);
   }
   const product = r.props.find((p) => p.id === 'productName');
-  assert.match(product.value, /CAT LADDER/, 'product name is the real title, not a fallback');
+  assert.match(product.value, /TROLLEY/, 'product name is the real title, not a fallback');
 });

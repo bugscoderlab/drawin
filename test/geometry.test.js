@@ -549,11 +549,17 @@ test('#11 e2e: re-scaffolded 004 -> dim1=1000 widens the cap; bars land on the s
   assert.ok(Math.abs(barEnd - (plate.e - cleanPlate.e + PLATE_NEAR)) < admitted,
     `bar end ${barEnd.toFixed(2)} lands on the shifted plate ${(plate.e - cleanPlate.e + PLATE_NEAR).toFixed(2)} within ±SPAN_TOL×extent×ratio (${admitted.toFixed(1)})`);
 
-  // the annotation reads 1000 (first glyph run of the group carries the value)
-  const ann = out.svg.match(/<text\b[^>]*?\bid="text1465"[^>]*>[\s\S]*?<\/text>/)[0];
+  // the annotation reads 1000. Glyph ids are conversion-specific (the
+  // glyph-merge collapses per-character texts), so derive the fresh id.
+  const annId = r.props.find((p) => p.id === 'dim1').geom.glyphs[0].id;
+  const ann = out.svg.match(new RegExp(`<text\\b[^>]*?\\bid="${annId}"[^>]*>[\\s\\S]*?<\\/text>`))[0];
   assert.ok(ann.includes('>1000<'), 'the dim1 annotation reads 1000');
-  // FLATBAR callouts (labels + leader) are untouched by the whole edit
-  for (const id of ['text1510', 'text1511', 'text1512', 'text1513', 'text1514', 'text1515', 'text1516', 'path1507']) {
-    assert.equal(out.svg.match(tagRe(id))[1], clean.match(tagRe(id))[1], `${id} (FLATBAR callout) unmoved`);
+  // FLATBAR callouts (labels + leader) are untouched by the whole edit:
+  // nothing outside the bound id set may move.
+  const tf = (svg) => { const m = {}; for (const x of svg.matchAll(/<[a-zA-Z][\w:-]*[^>]*?\bid="([^"]+)"[^>]*?\btransform="([^"]*)"/g)) m[x[1]] = x[2]; return m; };
+  const tClean = tf(clean), tOut = tf(out.svg);
+  const boundIds = new Set(tpl.bindings.flatMap((b) => b.ids || []));
+  for (const id of Object.keys(tClean)) {
+    if (tClean[id] !== tOut[id]) assert.ok(boundIds.has(id), `${id} moved but is not bound`);
   }
 });
