@@ -829,33 +829,32 @@ test('#22 real art: 003 dim4 = 2500; the staircase diagonals live in path data, 
   }).map((row) => row.id);
   assert.deepEqual(rotatedPaths, [], 'no non-text element in the whole drawing has a rotated matrix');
 
-  // Consequences, locked: the dim is forfeited by the sheet-frame lines
-  // path7315/path7320 (x=43.8/26.4, full height 732/767 px, 1 px wide)
-  // overlapping BOTH end planes — the all-or-nothing rule (#11, unchanged
-  // by #22/#23) drops every rule-matched binding with them (path1492's
-  // stretchAxial among them — the #23 test below re-derives that rule match
-  // and proves the render by the documented hand-accept path). The
-  // path1491 gap is measured there too: it stops 29 px short of the moving
-  // plane (3 px over tolerance).
+  // Consequences, locked: the full-height sheet-frame lines path7315/
+  // path7320 (x=43.8/26.4, full height 732/767 px, 1 px wide) overlap BOTH
+  // end planes, but at 2.1-3x the dim extent they are sheet furniture, not
+  // members — the FRAME_FACTOR gate (#20) skips them instead of poisoning
+  // the dim, so dim4's rule-matched binding SURVIVES: path1492 binds
+  // stretchAxial (the far stringer; the path1491 gap is measured in the
+  // #23 proof below). All-or-nothing still holds for member-sized overlaps.
   const d4 = r.parts.find((d) => d.param === 'dim4');
-  assert.deepEqual(d4, { param: 'dim4', bound: 0, skipped: 974, ambiguous: true });
+  assert.deepEqual(d4, { param: 'dim4', bound: 1, skipped: 974 });
   for (const id of ['path7315', 'path7320']) {
     const row = rows.find((x) => x.id === id);
-    assert.ok(row && row.h > 700, `${id} is a full-height frame line (the ambiguity trigger)`);
+    assert.ok(row && row.h > 700, `${id} is a full-height frame line (skipped, not ambiguous)`);
   }
 
-  // and the shape of the whole proposal: no axial op SURVIVES on this
-  // drawing — the frame lines forfeit every dim whose box contains them,
-  // and the sub-tolerance diagonal fragments (arrowhead halves like
-  // path1691/1692) stay axis-aligned via the noise gate. The conservative
-  // report is unchanged by #23 (see the finding above).
+  // and the shape of the whole proposal: exactly ONE axial op survives on
+  // this drawing — the far stringer. The sub-tolerance diagonal fragments
+  // (arrowhead halves like path1691/1692) stay axis-aligned via the noise
+  // gate.
   const tpl = JSON.parse(readFileSync(join(dir, 'template.json'), 'utf8'));
-  assert.ok(!tpl.bindings.some((b) => b.geom?.op?.endsWith('Axial')), 'no axial bindings on this conversion');
+  const axial = tpl.bindings.filter((b) => b.geom?.op?.endsWith('Axial'));
+  assert.deepEqual(axial.map((b) => ({ ids: b.ids, op: b.geom.op, about: b.geom.about })),
+    [{ ids: ['path1492'], op: 'stretchAxial', about: 'max' }], 'exactly the far stringer binds axially');
 });
 
 // ---------- #23 real art: the 003 stringer follows dim4 (rule match + rendered proof) ----------
 
-// The #23 proof on the flagship drawing. FINDING (locked with evidence):
 // path1492 — the far staircase stringer — rule-matches the axial span
 // (data-diagonal classification, d-level projection 216.9..480.7 against
 // the dim4 planes 218.9..477.6, tol ±25.9). path1491 — the near stringer —
@@ -865,13 +864,12 @@ test('#22 real art: 003 dim4 = 2500; the staircase diagonals live in path data, 
 // diagonal candidates near the moving plane are sub-tolerance hatch and
 // arrowhead fragments (the proposal's noise gate keeps them axis-aligned)
 // and the larger diagonal pieces are stringer duplicates, not riders.
-// dim4 REMAINS ambiguous: the full-height sheet-frame lines path7315/
-// path7320 overlap both end planes and the all-or-nothing rule (#11) drops
-// every rule-matched binding — conservatism is NOT weakened. The rendered
-// proof therefore runs the one rule-derived binding through the documented
-// hand-accept path (the same move POST /bind supports): the engine must
-// make the staircase follow dim4 = 3000 exactly.
-test('#23 real art: 003 dim4 = 3000 — the stringer follows (rendered proof via the hand-accept path)', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
+// The sheet-frame lines path7315/path7320 no longer forfeit the dim: at
+// 2.1-3x the dim extent the FRAME_FACTOR gate skips them as sheet
+// furniture. The scaffolded template therefore carries the stringer
+// binding directly — no hand-accept — and the rendered proof below shows
+// the staircase following dim4 = 3000 exactly.
+test('#23 real art: 003 dim4 = 3000 — the stringer follows (rendered proof)', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
   const tmp = mkdtempSync(join(tmpdir(), 'ladder-axial23-'));
   const r = await scaffold(join(repo, 'LSB-2607-003-RHC-R00.pdf'), { llm: false, id: 'geo-003-axial23', templatesDir: tmp });
   assert.equal(r.props.find((p) => p.id === 'dim4')?.value, '2500');
@@ -917,19 +915,18 @@ test('#23 real art: 003 dim4 = 3000 — the stringer follows (rendered proof via
   assert.ok(!(Math.abs(near.r1 - near.r0 - extent) <= tol && Math.abs(near.r0 - d0) <= tol && Math.abs(near.r1 - d1) <= tol),
     `path1491 stops ${(d1 - near.r1).toFixed(1)} px short of the moving plane — over tolerance, correctly unbound`);
 
-  // The finding, locked: all-or-nothing still forfeits dim4 (the frame
-  // lines), so the scaffolded template carries no part binding for it.
-  assert.deepEqual(r.parts.find((d) => d.param === 'dim4'), { param: 'dim4', bound: 0, skipped: 974, ambiguous: true });
+  // Locked: the scaffold itself now emits the stringer binding (the frame
+  // gate un-poisoned the dim) — dim4 carries its annotation cluster plus
+  // exactly one part op.
+  assert.deepEqual(r.parts.find((d) => d.param === 'dim4'), { param: 'dim4', bound: 1, skipped: 974 });
   const tpl = JSON.parse(readFileSync(join(dir, 'template.json'), 'utf8'));
   const d4Geom = tpl.bindings.filter((b) => b.param === 'dim4' && b.geom);
-  assert.equal(d4Geom.length, 3, 'dim4 carries exactly its annotation cluster (line, moving arrowhead, text)');
-  assert.ok(d4Geom.every((b) => ['stretchY', 'shiftY'].includes(b.geom.op)), 'no part op for dim4 — the dim was forfeited');
+  assert.equal(d4Geom.length, 4, 'dim4: annotation cluster (line, moving arrowhead, text) + the stringer');
+  const stringer = tpl.bindings.find((b) => (b.ids || []).includes('path1492'));
+  assert.deepEqual(stringer.geom, { op: 'stretchAxial', about: 'max', anchor: 2500 }, 'the scaffold proposed the stringer binding');
 
-  // The rendered proof: accept the one rule-derived binding by hand (the
-  // documented POST /bind move — the proposal report above is untouched)
-  // and render dim4 = 2500 -> 3000.
-  tpl.bindings.push({ ids: ['path1492'], param: 'dim4', geom: { op: 'stretchAxial', about: 'max', anchor: 2500 } });
-  writeFileSync(join(dir, 'template.json'), JSON.stringify(tpl, null, 2) + '\n');
+  // The rendered proof: dim4 = 2500 -> 3000, straight from the scaffolded
+  // template.
   const out = renderById(tmp, 'geo-003-axial23', { dim4: '3000' });
   assert.ifError(out.error);
   assert.ok(out.report.filter((b) => !b.ok).length === 0, JSON.stringify(out.report.filter((b) => !b.ok)));

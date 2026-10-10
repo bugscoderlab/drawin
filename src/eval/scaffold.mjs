@@ -260,6 +260,12 @@ export function proposeGeometry(rows, props, svg = '') {
 // the measured axis and ±1× on the cross axis (constants locked in
 // test/geometry.test.js).
 const LOCALITY = { along: 2, cross: 1 };
+// An element more than FRAME_FACTOR × the dim extent long cannot plausibly be
+// the member this dim measures (spec #20) — sheet-frame/border lines overlap
+// every dim's end planes and would otherwise poison it via all-or-nothing.
+// Such giants are skipped, never ambiguous (story 16 still holds for
+// member-sized overlaps).
+const FRAME_FACTOR = 1.5;
 
 /** Is `r` inside the dim line's locality box? (Shared by the deterministic
  *  span/attach rules and the LLM part pass — one definition of the guard.) */
@@ -470,7 +476,7 @@ function proposeParts(usable, claimed, { p, line, extent, vertical, datum, movin
         continue;
       }
       skipped++;
-      if (r0 <= d0 + tol && r1 >= d1 - tol) ambiguous = true;   // overlaps both end planes
+      if (r1 - r0 <= extent * FRAME_FACTOR && r0 <= d0 + tol && r1 >= d1 - tol) ambiguous = true;   // member-sized overlap of both end planes
       continue;
     }
     // r0/r1 are the element's bbox ends on the measured axis — for an
@@ -496,7 +502,7 @@ function proposeParts(usable, claimed, { p, line, extent, vertical, datum, movin
       continue;
     }
     skipped++;
-    if (r0 <= d0 + tol && r1 >= d1 - tol) ambiguous = true;   // overlaps both end planes
+    if (r1 - r0 <= extent * FRAME_FACTOR && r0 <= d0 + tol && r1 >= d1 - tol) ambiguous = true;   // member-sized overlap of both end planes
   }
   // All-or-nothing: one unclassifiable element forfeits the whole dimension.
   if (ambiguous) {
