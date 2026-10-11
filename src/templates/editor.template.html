@@ -95,7 +95,7 @@
   function setData(run,values){ let k=0; const inner=run.inner.replace(/>([^<]*)</g,()=>`>${values[k++]??''}<`); return run.open+inner+'</text>'; }
   // L2 geometry (faithful port of src/templates/geometry.mjs)
   const parseM=(t)=>{const m=String(t||'').match(/matrix\(([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+)\)/);return m?{a:+m[1],b:+m[2],c:+m[3],d:+m[4],e:+m[5],f:+m[6]}:null;};
-  const fmtN=(n)=>String(Number(n.toFixed(5)));
+  const fmtN=(n)=>String(Number(n.toFixed(7)));
   const mstr=({a,b,c,d,e,f})=>`matrix(${fmtN(a)},${fmtN(b)},${fmtN(c)},${fmtN(d)},${fmtN(e)},${fmtN(f)})`;
   // Local extent along one axis, tracked over path endpoints (curve control
   // points do not count) — exact for the line-based art this engine binds.

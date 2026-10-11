@@ -14,6 +14,7 @@ import { fileURLToPath } from 'node:url';
 
 import { scaffold } from '../src/eval/scaffold.mjs';
 import { textRuns } from '../src/templates/render.mjs';
+import { svgIds } from '../src/templates/authoring.mjs';
 import { renderById } from '../src/templates/renderCmd.mjs';
 import { availableConverters } from '../src/convert/convert.mjs';
 
@@ -110,32 +111,50 @@ test('geometry bindings are re-proposed from the current art, not copied over', 
   );
 });
 
+// Pick a carry target dynamically: a dim the fresh proposal forfeited
+// (ambiguous — hand bindings carry there by the story-18 exception), and an
+// art element no fresh binding claimed. Exact dims/ids are art-specific and
+// shift with the (now pinned) toolchain, so tests derive them, never
+// hardcode them.
+async function pickAmbiguousTarget(tmp, id) {
+  const r1 = await scaffold(PDF, { llm: false, id, templatesDir: tmp });
+  const amb = r1.parts.find((d) => d.ambiguous);
+  assert.ok(amb, 'an ambiguous dim exists on this art');
+  const value = Number(parseFloat(String(r1.props.find((p) => p.id === amb.param)?.value).replace(/,/g, '')));
+  assert.ok(Number.isFinite(value) && value > 0, `dim ${amb.param} has a numeric value`);
+  const tpl = readTpl(tmp, id);
+  const clean = readFileSync(join(tmp, id, 'base.clean.svg'), 'utf8');
+  const freshIds = new Set(tpl.bindings.flatMap((b) => b.ids || []));
+  const free = [...svgIds(clean)].find((x) => /^path/u.test(x) && !freshIds.has(x));
+  assert.ok(free, 'an unclaimed path element exists in the art');
+  return { r1, amb, value, tpl, free };
+}
+
 test('hand-made part binding survives re-scaffold with fresh calibration when ids exist and value matches', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
   const tmp = mkdtempSync(join(tmpdir(), 'ladder-re-'));
-  await scaffold(PDF, { llm: false, id: 're-part', templatesDir: tmp });
+  const { amb, value, tpl, free } = await pickAmbiguousTarget(tmp, 're-part');
 
-  // hand-made part binding for a dim the fresh proposal skips (dim5 on 003),
-  // written with stale calibration — re-scaffold must keep it but re-derive
-  // anchor/pxPerUnit from the fresh art (ticket #12)
-  const tpl = readTpl(tmp, 're-part');
-  tpl.bindings.push({ ids: ['path2'], param: 'dim5', geom: { op: 'shiftY', anchor: 424242, pxPerUnit: 0.000001 } });
+  // hand-made part binding with stale calibration — re-scaffold must keep it
+  // but re-derive anchor/pxPerUnit from the fresh art (ticket #12)
+  tpl.bindings.push({ ids: [free], param: amb.param, geom: { op: 'shiftY', anchor: 424242, pxPerUnit: 0.000001 } });
   writeTpl(tmp, 're-part', tpl);
 
   const r2 = await scaffold(PDF, { llm: false, id: 're-part', templatesDir: tmp });
   assert.equal(r2.preservedParts, 1, 'exactly the hand-made part binding is carried over');
   const tpl2 = readTpl(tmp, 're-part');
-  const kept = tpl2.bindings.find((b) => (b.ids || []).includes('path2'));
+  const kept = tpl2.bindings.find((b) => (b.ids || []).includes(free));
   assert.ok(kept, 'hand-made part binding survives re-scaffold');
-  assert.equal(kept.param, 'dim5', 'membership: param kept');
+  assert.equal(kept.param, amb.param, 'membership: param kept');
   assert.equal(kept.geom.op, 'shiftY', 'membership: op kept');
-  assert.equal(kept.geom.anchor, 1000, 'stale anchor recomputed from the fresh dim value');
-  const arrow = tpl2.bindings.find((b) => b.param === 'dim5' && b.geom?.op === 'shiftY' && b.ids?.length === 1);
+  assert.equal(kept.geom.anchor, value, 'stale anchor recomputed from the fresh dim value');
+  const arrow = tpl2.bindings.find((b) => b.param === amb.param && b.geom?.op?.startsWith('shift') && b.ids?.length === 1);
+  assert.ok(arrow, 'the fresh annotation arrowhead binding exists for comparison');
   assert.ok(Math.abs(kept.geom.pxPerUnit - arrow.geom.pxPerUnit) < 1e-9, 'stale pxPerUnit recomputed from the fresh art');
 
   // the carried binding still drives the render
   const out = renderById(tmp, 're-part', tpl2.sample);
   assert.ifError(out.error);
-  assert.ok(out.report.find((b) => (b.ids || []).includes('path2'))?.ok, 'carried part binding applies at render');
+  assert.ok(out.report.find((b) => (b.ids || []).includes(free))?.ok, 'carried part binding applies at render');
 });
 
 test('hand-made part binding drops when the value changed or an id is gone', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
@@ -178,21 +197,20 @@ test('stale auto-proposed annotation binding is never carried when its dim is re
 
 test('hand-made part binding on an ambiguous dim still survives re-scaffold', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
   const tmp = mkdtempSync(join(tmpdir(), 'ladder-re-'));
-  await scaffold(PDF, { llm: false, id: 're-ambig', templatesDir: tmp });
+  const { amb, value, tpl, free } = await pickAmbiguousTarget(tmp, 're-ambig');
 
-  // dim5's fresh part proposal is ambiguous (0 bound) — the scaffold proposed
-  // nothing for it, so a hand-made part binding for it still carries (spec
-  // story 18: hand-add part bindings for the dims the scaffold skipped).
-  const tpl = readTpl(tmp, 're-ambig');
-  tpl.bindings.push({ ids: ['path2'], param: 'dim5', geom: { op: 'shiftY', anchor: 1000, pxPerUnit: 0.000001 } });
+  // the dim's fresh part proposal was forfeited (ambiguous) — the scaffold
+  // proposed nothing for it, so a hand-made part binding still carries
+  // (spec story 18: hand-add part bindings for the dims the scaffold skipped)
+  tpl.bindings.push({ ids: [free], param: amb.param, geom: { op: 'shiftY', anchor: 1000, pxPerUnit: 0.000001 } });
   writeTpl(tmp, 're-ambig', tpl);
 
   const r2 = await scaffold(PDF, { llm: false, id: 're-ambig', templatesDir: tmp });
   assert.equal(r2.preservedParts, 1, 'hand-made part binding on an ambiguous dim is carried');
   const tpl2 = readTpl(tmp, 're-ambig');
-  const kept = tpl2.bindings.find((b) => (b.ids || []).includes('path2'));
-  assert.equal(kept.param, 'dim5', 'membership kept');
-  assert.equal(kept.geom.anchor, 1000, 'calibration re-derived from the fresh dim value');
+  const kept = tpl2.bindings.find((b) => (b.ids || []).includes(free));
+  assert.equal(kept.param, amb.param, 'membership kept');
+  assert.equal(kept.geom.anchor, value, 'calibration re-derived from the fresh dim value');
 });
 
 test('auto-proposed part bindings are always recomputed, never carried', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {

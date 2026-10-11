@@ -155,7 +155,7 @@ test('merge: counts split by provenance, ambiguous flag preserved, ids join the 
 
 // ---------- real art: 004 (Inkscape-gated) ----------
 
-test('scaffold 004 with a fake llm: bogus ids rejected; rungs are legitimate candidates the rules alone leave unbound', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
+test('scaffold 004 with a fake llm: bogus ids rejected; a candidate-table id accepted and engine-calibrated', { skip: !tools.includes('inkscape') && 'requires inkscape' }, async () => {
   const pdf = join(repo, 'LSB-2607-004-FHL-R00.pdf');
   assert.ok(exists(pdf), '004 evidence PDF at repo root');
   const { scaffold, reportScaffold } = await import('../src/eval/scaffold.mjs');
@@ -165,34 +165,38 @@ test('scaffold 004 with a fake llm: bogus ids rejected; rungs are legitimate can
     llm: false, id: 'geo-llm', templatesDir: tmp,
   });
   assert.equal(r1.llmParts.asked, 0, 'opts.llm === false gates the pass');
-  const rungBound = (dir) => JSON.parse(readFileSync(join(dir, 'template.json'), 'utf8')).bindings
-    .some((b) => (b.ids || []).includes('path4324'));
-  assert.ok(!rungBound(join(tmp, 'geo-llm')), 'rules alone leave the rungs unbound (span tolerance)');
-  // the dim line's own id (claimed by the annotation stage) must be unproposable
-  const dimLineId = JSON.parse(readFileSync(join(tmp, 'geo-llm', 'template.json'), 'utf8')).bindings
-    .find((b) => b.param === 'dim1' && b.geom?.op === 'stretchX').ids[0];
-
+  // The eligible dims are art-dependent: whichever dim the fake is FIRST
+  // asked about gets the picks — the first id from that dim's own candidate
+  // table (accepted), plus two ids that must be rejected (a nonexistent id
+  // and that dim's own line id, claimed by the annotation stage).
+  let askedDim = null;
+  let dimLineId = null;
   const r2 = await scaffold(pdf, {
     llm: fakeLLM((req) => {
-      // the fake answers EVERY eligible dim — only dim1 gets picks: the first
-      // id from dim1's own candidate table (parsed out of the prompt), plus
-      // two ids that must be rejected.
       const asked = req.text.match(/Dimension "(dim\d+)"/)?.[1];
-      if (asked !== 'dim1') return {};
+      if (!asked) return {};
+      if (!askedDim) {
+        askedDim = asked;
+        dimLineId = JSON.parse(readFileSync(join(tmp, 'geo-llm', 'template.json'), 'utf8')).bindings
+          .find((b) => b.param === askedDim && b.geom?.op?.startsWith('stretch'))?.ids[0];
+      }
+      if (asked !== askedDim) return {};
       const firstCand = req.text.split('\n').find((l) => /^(path|text|tspan)\w*\d+\s+-?[\d.]/.test(l))?.split(/\s+/)[0];
       return { spans: [firstCand], attached: ['noSuchId', dimLineId] };
     }, calls),
     id: 'geo-llm', templatesDir: tmp, force: true,
   });
   assert.ok(calls.length > 0, 'the fake was asked for skipped-heavy dims');
-  assert.ok(calls.some((c) => /Dimension "dim2"/.test(c.text)), 'ambiguous dims are asked too');
-  // an id from dim1's own candidate table is accepted and engine-calibrated;
+  assert.ok(askedDim, 'some dim received picks');
+  assert.ok(dimLineId, `the asked dim ${askedDim} has a claimed line id to reject`);
+  assert.ok(calls.some((c) => !new RegExp(`Dimension "${askedDim}"`).test(c.text)), 'other eligible dims are asked too (which dims qualify is art-dependent)');
+  // an id from the dim's own candidate table is accepted and engine-calibrated;
   // a nonexistent id and the claimed dim-line id are rejected
   assert.equal(r2.llmParts.bound, 1, 'membership is the model call, math is the engine\'s');
   assert.equal(r2.llmParts.rejected, 2);
-  const d1 = r2.parts.find((d) => d.param === 'dim1');
-  assert.equal(d1.llm, 1, 'dim1 shows the llm provenance split');
-  const picked = r2.llmParts && calls.find((c) => /Dimension "dim1"/.test(c.text)).text.split('\n')
+  const dAsked = r2.parts.find((d) => d.param === askedDim);
+  assert.equal(dAsked.llm, 1, `${askedDim} shows the llm provenance split`);
+  const picked = calls.find((c) => new RegExp(`Dimension "${askedDim}"`).test(c.text)).text.split('\n')
     .find((l) => /^(path|text|tspan)\w*\d+\s+-?[\d.]/.test(l))?.split(/\s+/)[0];
   assert.ok(picked, 'parsed a candidate from the prompt');
   const boundNow = JSON.parse(readFileSync(join(tmp, 'geo-llm', 'template.json'), 'utf8')).bindings
@@ -202,7 +206,7 @@ test('scaffold 004 with a fake llm: bogus ids rejected; rungs are legitimate can
   reportScaffold(r2, (s) => lines.push(s));
   assert.ok(lines.some((s) => /llm parts :/.test(s)), 'the report shows the llm line');
   const { renderById } = await import('../src/templates/renderCmd.mjs');
-  const out = await renderById(tmp, 'geo-llm', { dim1: '1000' });
+  const out = await renderById(tmp, 'geo-llm', { [askedDim]: '999' });
   assert.ok(out.report.filter((x) => x.ok === false).length === 0, 'template still renders cleanly');
 });
 

@@ -3,8 +3,14 @@
 # poppler 26.x — bookworm's Inkscape 1.2 / poppler 22 shift corpus extraction
 # results). Node 22 is copied from the official image. Zero runtime npm deps —
 # nothing to install beyond the system packages.
+#
+# The base digest AND the package versions are PINNED. ubuntu:26.04 is a
+# rolling tag: an unpinned rebuild picked up new base libraries (glibc/
+# freetype) that changed Inkscape's PDF conversion output (text grouping,
+# glyph splitting) and invalidated the locked real-art assertions in the
+# test suite. Do not unpin without regenerating those calibrations.
 FROM node:22-bookworm-slim AS node
-FROM ubuntu:26.04
+FROM ubuntu:26.04@sha256:f144425ff09be612d6d9ad965196e9cdc23dae1f42110a8a11a3e9a8198759f7
 
 COPY --from=node /usr/local /usr/local
 
@@ -12,8 +18,14 @@ COPY --from=node /usr/local /usr/local
 COPY scripts/make-arialmt-fonts.py /usr/local/bin/make-arialmt-fonts.py
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      inkscape poppler-utils ghostscript fontconfig fonts-dejavu-core fonts-liberation \
-      python3 python3-fonttools \
+      inkscape=1.4.3-0ubuntu2 \
+      poppler-utils=26.01.0-2ubuntu0.2 \
+      ghostscript=10.06.0~dfsg-3ubuntu1.1 \
+      fontconfig=2.17.1-3ubuntu1 \
+      fonts-dejavu-core=2.37-8build1 \
+      fonts-liberation=1:2.1.5-3build1 \
+      python3 \
+      python3-fonttools \
     && python3 /usr/local/bin/make-arialmt-fonts.py /usr/share/fonts/truetype /usr/local/share/fonts/arialmt \
     && DEBIAN_FRONTEND=noninteractive apt-get purge -y python3-fonttools \
     && DEBIAN_FRONTEND=noninteractive apt-get autoremove -y \

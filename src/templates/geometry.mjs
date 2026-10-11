@@ -63,7 +63,9 @@ const num = (v) => {
   return Number.isNaN(n) ? null : n;
 };
 
-const fmt = (n) => String(Number(n.toFixed(5)));
+// 7 decimals: Inkscape's own output carries up to 7 (e.g. 1.3333333) —
+// fewer silently reformats (and slightly detunes) every rewritten element.
+const fmt = (n) => String(Number(n.toFixed(7)));
 
 export function parseMatrix(transform) {
   const m = String(transform || '').match(/matrix\(([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+),([-\d.eE]+)\)/);
